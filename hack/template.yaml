@@ -1,0 +1,204 @@
+apiVersion: v1
+kind: Template
+parameters:
+- name: NAME
+  description: The name of the DeploymentConfig.
+  value: online-user-analytics
+
+- name: IMAGE_PULL_POLICY
+  description: The image pull policy (configurable to facilitate testing)
+  value: IfNotPresent
+
+- name: IMAGE_NAME
+  description: The controller docker image.
+  value: openshift/online-user-analytics:latest
+
+- name: CLUSTER_NAME
+  description: Cluster name
+  value: "kubernetes"
+
+- name: MAXIMUM_QUEUE_LENGTH
+  description: The maximum number of analytic event items that are internally queued for forwarding
+  value: "1000000"
+
+- name: METRICS_SERVER_PORT
+  description: The port on localhost serving metrics
+  value: "9999"
+
+- name: METRICS_POLLING_FREQUENCY
+  description: The number of seconds between metrics snapshots.
+  value: "10"
+
+- name: WOOPRA_ENABLED
+  description: Enable/disable sending data to Woopra
+
+- name: INTERCOM_ENABLED
+  description: Enable/disable sending data to Intercom
+
+- name: WOOPRA_DEFAULT_USERID
+  description: The UserID to use an analyticEvent owner cannot be found. Useful for testing.
+  value: ""
+
+- name: INTERCOM_DEFAULT_USERID
+  description: The UserID to use an analyticEvent owner cannot be found. Useful for testing.
+  value: ""
+
+- name: WOOPRA_ENDPOINT
+  description: The URL to send analytics to
+  value: "http://www.woopra.com/track/ce"
+
+- name: WOOPRA_DOMAIN
+  description: The URL to send analytics to
+  value: "dev.openshift.redhat.com"
+
+- name: WOOPRA_USERNAME
+  description: Username for Basic Auth
+
+- name: WOOPRA_PASSWORD
+  description: Password for Basic Auth
+
+- name: INTERCOM_USERNAME
+  description: Username for Basic Auth
+
+- name: INTERCOM_PASSWORD
+  description: Password for Basic Auth
+
+- name: LOG_LEVEL
+  description: Logging level.
+  value: "0"
+
+objects:
+# A role which allows volume provisioning.
+- apiVersion: v1
+  kind: ClusterRole
+  metadata:
+    name: user-analytics
+  rules:
+  - resources:
+    - pods
+    - replicationcontrollers
+    - persistentvolumeclaims
+    - secrets
+    - services
+    - namespaces
+    - deploymentConfigs
+    - routes
+    - builds
+    - templates
+    - imagestreams
+    - users
+    - projects
+    verbs:
+    - get
+    - list
+    - watch
+# A service account for use by the controller.
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: user-analytics
+# Binds the service account to the account management role
+- apiVersion: v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: user-analytics
+  roleRef:
+    name: user-analytics
+  subjects:
+  - kind: ServiceAccount
+    name: user-analytics
+    namespace: openshift-infra
+# A secret to expose Woopra credentials
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: woopra-credentials
+  data:
+    username: ${WOOPRA_USERNAME}
+    password: ${WOOPRA_PASSWORD}
+# A secret to expose Intercom credentials
+- apiVersion: v1
+  kind: Secret
+  metadata:
+    name: intercom-credentials
+  data:
+    username: ${INTERCOM_USERNAME}
+    password: ${INTERCOM_PASSWORD}
+# The controller.
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: ${NAME}
+  spec:
+    replicas: 1
+    selector:
+      app: ${NAME}
+    strategy:
+      type: Recreate
+    triggers:
+    - type: ConfigChange
+    template:
+      metadata:
+        labels:
+          app: ${NAME}
+      spec:
+        serviceAccountName: user-analytics
+        volumes:
+        - name: woopra-credentials
+          secret:
+            secretName: woopra-credentials
+        - name: intercom-credentials
+          secret:
+            secretName: intercom-credentials
+        containers:
+        - name: user-analytics
+          image: ${IMAGE_NAME}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          volumeMounts:
+          - name: woopra-credentials
+            mountPath: /etc/woopra-credentials
+            readOnly: true
+          - name: intercom-credentials
+            mountPath: /etc/intercom-credentials
+            readOnly: true
+          env:
+          - name: LOG_LEVEL
+            value: ${LOG_LEVEL}
+          - name: CLUSTER_NAME
+            value: ${CLUSTER_NAME}
+          - name: WOOPRA_ENABLED
+            value: ${WOOPRA_ENABLED}
+          - name: INTERCOM_ENABLED
+            value: ${INTERCOM_ENABLED}
+          - name: WOOPRA_DEFAULT_USERID
+            value: ${WOOPRA_DEFAULT_USERID}
+          - name: INTERCOM_DEFAULT_USERID
+            value: ${INTERCOM_DEFAULT_USERID}
+          - name: WOOPRA_ENDPOINT
+            value: ${WOOPRA_ENDPOINT}
+          - name: WOOPRA_DOMAIN
+            value: ${WOOPRA_DOMAIN}
+          - name: MAXIMUM_QUEUE_LENGTH
+            value: ${MAXIMUM_QUEUE_LENGTH}
+          - name: METRICS_SERVER_PORT
+            value: ${METRICS_SERVER_PORT}
+          - name: METRICS_POLLING_FREQUENCY
+            value: ${MAXIMUM_QUEUE_LENGTH}
+          command:
+          - /usr/bin/user-analytics
+          - -useServiceAccounts=true
+          - -clusterName=$(CLUSTER_NAME)
+          - -maximumQueueLength=$(MAXIMUM_QUEUE_LENGTH)
+          - -metricsServerPort=$(METRICS_SERVER_PORT)
+          - -metricsPollingFrequency=$(METRICS_POLLING_FREQUENCY)
+          - -woopraEnabled=$(WOOPRA_ENABLED)
+          - -intercomEnabled=$(INTERCOM_ENABLED)
+          - -woopraDefaultUserId=$(WOOPRA_DEFAULT_USERID)
+          - -intercomDefaultUserId=$(INTERCOM_DEFAULT_USERID)
+          - -woopraEndpoint=$(WOOPRA_ENDPOINT)
+          - -woopraDomain=$(WOOPRA_DOMAIN)
+          - -woopraUsernameFile=/etc/woopra-credentials/username
+          - -woopraPasswordFile=/etc/woopra-credentials/password
+          - -intercomUsernameFile=/etc/intercom-credentials/username
+          - -intercomPasswordFile=/etc/intercom-credentials/password
+          - -v=$(LOG_LEVEL)

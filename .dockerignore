@@ -1,0 +1,4 @@
+internal/pkg
+internal/bin
+internal/src/github.com/openshift/origin/Godeps/_workspace/pkg
+internal/src/github.com/openshift/origin/Godeps/_workspace/bin
