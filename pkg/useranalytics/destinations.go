@@ -68,10 +68,12 @@ func (d *WoopraDestination) send(params map[string]string) error {
 func (d *WoopraDestination) Send(ev *analyticsEvent) error {
 	// all vendor-specific field mapping to be done here
 	params := map[string]string{
-		"host":                  d.Domain,
-		"event":                 ev.event,
-		"cv_email":              ev.objectNamespace,
-		"cv_project_namespace":  ev.objectNamespace,
+		"host":                 d.Domain,
+		"event":                ev.event,
+		"cv_email":             ev.objectNamespace,
+		"cv_project_namespace": ev.objectNamespace,
+		"ce_name":              ev.objectName,
+		"ce_namespace":         ev.objectNamespace,
 	}
 	for key, value := range ev.properties {
 		params[key] = value

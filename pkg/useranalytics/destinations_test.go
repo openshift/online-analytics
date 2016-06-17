@@ -1,9 +1,14 @@
 package useranalytics
 
 import (
-	"k8s.io/kubernetes/pkg/api"
 	"strings"
 	"testing"
+	"os"
+
+	"k8s.io/kubernetes/pkg/api"
+	meta "k8s.io/kubernetes/pkg/api/meta"
+	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
+	"github.com/openshift/origin/pkg/client/testclient"
 )
 
 func TestIntercomDestination(t *testing.T) {
@@ -72,32 +77,42 @@ func TestWoopraDestination(t *testing.T) {
 
 
 func TestWoopraLive(t *testing.T) {
-	pod := &api.Pod{
-		ObjectMeta: api.ObjectMeta{
-			Name:      "foo",
-			Namespace: "test-foo-bar",
-		},
+
+	username := os.Getenv("WOOPRA_USERNAME")
+	password := os.Getenv("WOOPRA_PASSWORD")
+
+	// only run this live test when the variables are provided externally
+	if username == "" || password == "" {
+		return
 	}
 
-	// TODO:  this needs some kind of factory per object
-	// that creates analyticsEvent objects
-	event, _ := newEvent(pod, "added")
+	oc := &testclient.Fake{}
+	kc := &ktestclient.Fake{}
 
-	dest := &WoopraDestination{
-		Method:   "GET",
-		Endpoint: "http://www.woopra.com/track/ce",
-		Domain:   "dev.openshift.redhat.com",
-		Client:   NewSimpleHttpClient("REPLACE ME w/ username", "REPLACE ME w/ password"),
+	items := watchFuncList(kc, oc, nil)
+
+	for _, w := range items {
+		m, err := meta.Accessor(w.objType)
+		if err != nil {
+			t.Errorf("Unable to create object meta for %v", w.objType)
+		}
+		m.SetName("foo")
+		m.SetNamespace("foobar")
+
+		event, _ := newEvent(w.objType, "added")
+
+		dest := &WoopraDestination{
+			Method:   "GET",
+			Endpoint: "http://www.woopra.com/track/ce",
+			Domain:   "dev.openshift.redhat.com",
+			Client:   NewSimpleHttpClient(username, password),
+		}
+
+		err = dest.Send(event)
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
 	}
-
-	err := dest.Send(event)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	dest.Send(event)
-
-
 }
 
 func TestPrepEndpoint(t *testing.T) {
