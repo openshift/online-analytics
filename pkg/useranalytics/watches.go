@@ -61,7 +61,7 @@ func watchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, pr
 			},
 		},
 		"namespaces": {
-			objType: &api.Service{},
+			objType: &api.Namespace{},
 			watchFunc: func(options api.ListOptions) (watch.Interface, error) {
 				return kubeClient.Namespaces().Watch(options)
 			},
