@@ -9,37 +9,38 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	meta "k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/watch"
 )
 
 type analyticsEvent struct {
 	// userID of the namespace/project owner.  TODO: change to action owner
-	userID          string
+	userID string
 	// pod_add, secret_delete, etc.
-	event           string
+	event string
 	// Pod, ReplicationController, etc.
-	objectKind      string
-	objectName      string
+	objectKind string
+	objectName string
 	// Namespace/Project. Owner of project is analyticEvent owner.
 	objectNamespace string
 	properties      map[string]string
 	// timestamp of event occurrence
-	timestamp       time.Time
+	timestamp time.Time
 	// the name of the dest to send this event to
-	destination     string
+	destination string
 	// unix time when this event was successfully sent to the destination
-	sentTime        int64
+	sentTime int64
 	// any error message that occurs during sending to destination
-	errorMessage    string
+	errorMessage string
 }
 
-func newEventFromRuntime(obj runtime.Object, event string) (*analyticsEvent, error) {
+func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyticsEvent, error) {
 	m, err := meta.Accessor(obj)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create object meta for %v", obj)
 	}
 	o2 := reflect.ValueOf(obj)
 	simpleTypeName := strings.ToLower(strings.Replace(o2.Type().String(), "*api.", "", 1))
-	eventName := fmt.Sprintf("%s_%s", simpleTypeName, strings.ToLower(event))
+	eventName := fmt.Sprintf("%s_%s", simpleTypeName, strings.ToLower(string(eventType)))
 
 	analyticEvent := &analyticsEvent{
 		objectKind:      simpleTypeName,
@@ -56,18 +57,20 @@ func newEventFromRuntime(obj runtime.Object, event string) (*analyticsEvent, err
 	//	_ = meta.GetCreationTimestamp()
 	//	_ = meta.GetDeletionTimestamp()
 
-	switch event {
-	case "added":
+	switch eventType {
+	case watch.Added:
 		analyticEvent.timestamp = om.CreationTimestamp.Time
-	case "deleted":
+	case watch.Deleted:
 		analyticEvent.timestamp = om.DeletionTimestamp.Time
+	default:
+		return nil, fmt.Errorf("Unknown event %v", eventType)
 	}
 
 	return analyticEvent, nil
 }
-func newEvent(obj interface{}, event string) (*analyticsEvent, error) {
+func newEvent(obj interface{}, eventType watch.EventType) (*analyticsEvent, error) {
 	if rt, ok := obj.(runtime.Object); ok {
-		return newEventFromRuntime(rt, event)
+		return newEventFromRuntime(rt, eventType)
 	}
 	return nil, fmt.Errorf("Object not kind runtime.Object:  %v", obj)
 }

@@ -1,14 +1,15 @@
 package useranalytics
 
 import (
+	"os"
 	"strings"
 	"testing"
-	"os"
 
+	"github.com/openshift/origin/pkg/client/testclient"
 	"k8s.io/kubernetes/pkg/api"
 	meta "k8s.io/kubernetes/pkg/api/meta"
 	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	"github.com/openshift/origin/pkg/client/testclient"
+	"k8s.io/kubernetes/pkg/watch"
 )
 
 func TestIntercomDestination(t *testing.T) {
@@ -21,7 +22,7 @@ func TestIntercomDestination(t *testing.T) {
 
 	// TODO:  this needs some kind of factory per object
 	// that creates analyticsEvent objects
-	event, _ := newEvent(pod, "added")
+	event, _ := newEvent(pod, watch.Added)
 
 	dest := &IntercomDestination{
 		Client: &mockIntercomEventClient{},
@@ -53,7 +54,7 @@ func TestWoopraDestination(t *testing.T) {
 
 	// TODO:  this needs some kind of factory per object
 	// that creates analyticsEvent objects
-	event, _ := newEvent(pod, "created")
+	event, _ := newEvent(pod, watch.Added)
 
 	dest := &WoopraDestination{
 		Method:   "GET",
@@ -74,7 +75,6 @@ func TestWoopraDestination(t *testing.T) {
 	}
 
 }
-
 
 func TestWoopraLive(t *testing.T) {
 
@@ -99,7 +99,7 @@ func TestWoopraLive(t *testing.T) {
 		m.SetName("foo")
 		m.SetNamespace("foobar")
 
-		event, _ := newEvent(w.objType, "added")
+		event, _ := newEvent(w.objType, watch.Added)
 
 		dest := &WoopraDestination{
 			Method:   "GET",

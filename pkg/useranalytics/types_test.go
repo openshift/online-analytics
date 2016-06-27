@@ -9,6 +9,7 @@ import (
 	routeapi "github.com/openshift/origin/pkg/route/api"
 	templateapi "github.com/openshift/origin/pkg/template/api"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/watch"
 )
 
 func TestHash(t *testing.T) {
@@ -20,43 +21,43 @@ func TestHash(t *testing.T) {
 		obj           interface{}
 	}{
 		{
-			expectedMatch:false,
+			expectedMatch: false,
 			obj: &api.Pod{
 				ObjectMeta: api.ObjectMeta{
-					Name:              "foo",
-					Namespace:         "bar",
+					Name:      "foo",
+					Namespace: "bar",
 				},
 			},
 		},
 		{
-			expectedMatch:false,
+			expectedMatch: false,
 			obj: &api.Pod{
 				ObjectMeta: api.ObjectMeta{
-					Name:              "foo2",
-					Namespace:         "bar",
+					Name:      "foo2",
+					Namespace: "bar",
 				},
 			},
 		},
 		{
-			expectedMatch:true,
+			expectedMatch: true,
 			obj: &api.Pod{
 				ObjectMeta: api.ObjectMeta{
-					Name:              "foo",
-					Namespace:         "bar",
+					Name:      "foo",
+					Namespace: "bar",
 				},
 			},
 		},
 		{
-			expectedMatch:false,
+			expectedMatch: false,
 			obj: &api.Pod{
 				ObjectMeta: api.ObjectMeta{
-					Name:              "foo3",
-					Namespace:         "bar",
+					Name:      "foo3",
+					Namespace: "bar",
 				},
 			},
 		},
 	} {
-		event, err := newEvent(test.obj, "add")
+		event, err := newEvent(test.obj, watch.Added)
 		if err != nil {
 			t.Errorf("Unexpected error %s", err)
 		}
@@ -242,7 +243,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 	}
 
 	for name, test := range tests {
-		event, _ := newEvent(test.input, "add")
+		event, _ := newEvent(test.input, watch.Added)
 		if event.objectName != test.expected.objectName {
 			t.Errorf("Expected %s but got %s", test.expected.objectName, event.objectName)
 		}

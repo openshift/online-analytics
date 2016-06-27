@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"time"
 	"sync"
+	"time"
 
 	// this import statement registers all Origin types w/ the client
 	_ "github.com/openshift/origin/pkg/api/install"
@@ -26,12 +26,12 @@ import (
 // AnalyticsController is a controller that Watches & Forwards analytics data to various endpoints.
 // Only new analytics are forwarded. There is no replay.
 type AnalyticsController struct {
-	watchFuncs              map[string]func(options api.ListOptions) (watch.Interface, error)
-	destinations            map[string]Destination
-	queue                   *cache.FIFO
-	maximumQueueLength      int
+	watchFuncs         map[string]func(options api.ListOptions) (watch.Interface, error)
+	destinations       map[string]Destination
+	queue              *cache.FIFO
+	maximumQueueLength int
 	// required to lookup Projects and Users, as needed
-	client                  osclient.Interface
+	client osclient.Interface
 	// cache of namespaces->user
 	userNamespaces          map[string]*userapi.User
 	projectStore            cache.Store
@@ -43,7 +43,7 @@ type AnalyticsController struct {
 	eventsHandled           int
 	metrics                 *Stack
 	mutex                   *sync.Mutex
-	stopChannel             <-chan struct {}
+	stopChannel             <-chan struct{}
 	projectWatchFunc        func(options api.ListOptions) (watch.Interface, error)
 	userWatchFunc           func(options api.ListOptions) (watch.Interface, error)
 }
@@ -105,7 +105,7 @@ func analyticKeyFunc(obj interface{}) (string, error) {
 }
 
 // Run starts all the watches within this controller and starts workers to process events
-func (c *AnalyticsController) Run(stopCh <-chan struct {}, workers int) {
+func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 	glog.V(5).Infof("Starting ThirdPartyAnalyticsController\n")
 
 	c.stopChannel = stopCh
@@ -127,9 +127,9 @@ func (c *AnalyticsController) Run(stopCh <-chan struct {}, workers int) {
 	c.runWatches()
 
 	// this go routine collects metrics in the background
-	go wait.Until(c.gatherMetrics, time.Duration(c.metricsPollingFrequency) * time.Second, c.stopChannel)
+	go wait.Until(c.gatherMetrics, time.Duration(c.metricsPollingFrequency)*time.Second, c.stopChannel)
 	// this go routine serves metrics for consumption
-	go wait.Until(c.serveMetrics, 1 * time.Second, c.stopChannel)
+	go wait.Until(c.serveMetrics, 1*time.Second, c.stopChannel)
 }
 
 // runWatches will attempt to run all watches in separate goroutines w/ the same stop channel.  Each has its own
@@ -154,7 +154,7 @@ func (c *AnalyticsController) runWatches() {
 
 			time.Sleep(backoff)
 			backoff = backoff * 2
-			if backoff > 60 * time.Second {
+			if backoff > 60*time.Second {
 				backoff = 60 * time.Second
 			}
 
@@ -171,12 +171,12 @@ func (c *AnalyticsController) runWatches() {
 						return
 					}
 
-				// success means the watch is working.
-				// reset the backoff back to 1s for this watch
+					// success means the watch is working.
+					// reset the backoff back to 1s for this watch
 					backoff = 1 * time.Second
 
 					if event.Type == watch.Added || event.Type == watch.Deleted {
-						analytic, err := newEvent(event.Object, string(event.Type))
+						analytic, err := newEvent(event.Object, event.Type)
 						if err != nil {
 							glog.Errorf("Unexpected error creation analytic from watch event %#v", event.Object)
 						} else {
@@ -187,7 +187,7 @@ func (c *AnalyticsController) runWatches() {
 					}
 				}
 			}
-		}, 1 * time.Millisecond, c.stopChannel)
+		}, 1*time.Millisecond, c.stopChannel)
 	}
 }
 
@@ -200,7 +200,7 @@ func (c *AnalyticsController) runProjectWatch() {
 			return c.projectWatchFunc(options)
 		},
 	}
-	cache.NewReflector(projectLW, &projectapi.Project{}, c.projectStore, 10 * time.Minute).Run()
+	cache.NewReflector(projectLW, &projectapi.Project{}, c.projectStore, 10*time.Minute).Run()
 
 	userLW := &cache.ListWatch{
 		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
@@ -210,7 +210,7 @@ func (c *AnalyticsController) runProjectWatch() {
 			return c.userWatchFunc(options)
 		},
 	}
-	cache.NewReflector(userLW, &userapi.User{}, c.userStore, 10 * time.Minute).Run()
+	cache.NewReflector(userLW, &userapi.User{}, c.userStore, 10*time.Minute).Run()
 }
 
 func (c *AnalyticsController) gatherMetrics() {

@@ -1,109 +1,140 @@
 package useranalytics
+
+import (
+	"testing"
+	"time"
+
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/unversioned"
+	"k8s.io/kubernetes/pkg/watch"
+)
+
+func TestAnalyticObjectCreation(t *testing.T) {
+	pod := &api.Pod{
+		ObjectMeta: api.ObjectMeta{
+			Name:      "foo",
+			Namespace: "bar",
+			CreationTimestamp: unversioned.Time{
+				time.Now().Add(10 * time.Second),
+			},
+		},
+	}
+
+	ev, err := newEvent(pod, watch.Added)
+	if err != nil {
+		t.Errorf("Unexpected error %v", err)
+	}
+
+	if ev.event != "pod_added" {
+		t.Errorf("Expected %v but got %v", "pod_added", ev.event)
+	}
+	if ev.timestamp.UnixNano() != pod.CreationTimestamp.UnixNano() {
+		t.Errorf("Expected %v but got %v", pod.CreationTimestamp.UnixNano(), ev.timestamp.UnixNano())
+	}
+
+	pod.DeletionTimestamp = &unversioned.Time{time.Now().Add(10 * time.Second)}
+	ev, err = newEvent(pod, watch.Deleted)
+	if err != nil {
+		t.Errorf("Unexpected error %v", err)
+	}
+
+	if ev.event != "pod_deleted" {
+		t.Errorf("Expected %v but got %v", "pod_deleted", ev.event)
+	}
+	if ev.timestamp.UnixNano() != pod.DeletionTimestamp.UnixNano() {
+		t.Errorf("Expected %v but got %v", pod.DeletionTimestamp.UnixNano(), ev.timestamp.UnixNano())
+	}
+
+	ev, err = newEvent(pod, watch.Modified)
+	if err == nil {
+		t.Errorf("Expected error but got nil")
+	}
+}
+
 //
-//import (
-//	"fmt"
-//	"io/ioutil"
-//	"net/http"
-//	"testing"
-//	"time"
+//func TestController(t *testing.T) {
+//	mockClient := mockClient()
+//	oc := &testclient.Fake{}
+//	kc := &ktestclient.Fake{}
 //
-//	"k8s.io/kubernetes/pkg/api"
-//	"k8s.io/kubernetes/pkg/api/unversioned"
-//	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-//	"k8s.io/kubernetes/pkg/util"
-//	"k8s.io/kubernetes/pkg/util/wait"
-//	"k8s.io/kubernetes/pkg/watch"
+//	config := &AnalyticsControllerConfig{
+//		Destinations: map[string]Destination{
+//			"anywhere": &mockDestination{},
+//		},
+//		DefaultUserIds: map[string]string{
+//			"anywhere": "default-id",
+//		},
+//		QueueClient:        mockClient,
+//		MaximumQueueLength: 1000000,
+//		OSClient: oc,
+//		KubeClient: kc,
+//	}
 //
-//	osclient "github.com/openshift/origin/pkg/client"
-//	"github.com/openshift/origin/pkg/client/testclient"
-//	projectapi "github.com/openshift/origin/pkg/project/api"
-//	userapi "github.com/openshift/origin/pkg/user/api"
-//)
+//	ctrl, err := NewAnalyticsController(config)
+//	if err != nil {
+//		t.Fatalf("Unexpected error: %v", err)
+//	}
 //
-////
-////func TestController(t *testing.T) {
-////	mockClient := mockClient()
-////	oc := &testclient.Fake{}
-////	kc := &ktestclient.Fake{}
-////
-////	config := &AnalyticsControllerConfig{
-////		Destinations: map[string]Destination{
-////			"anywhere": &mockDestination{},
-////		},
-////		DefaultUserIds: map[string]string{
-////			"anywhere": "default-id",
-////		},
-////		QueueClient:        mockClient,
-////		MaximumQueueLength: 1000000,
-////		OSClient: oc,
-////		KubeClient: kc,
-////	}
-////
-////	ctrl, err := NewAnalyticsController(config)
-////	if err != nil {
-////		t.Fatalf("Unexpected error: %v", err)
-////	}
-////
-////	ctrl.startTime = time.Now().UnixNano()
-////
-////	pod := &api.Pod{
-////		ObjectMeta: api.ObjectMeta{
-////			Name:      "foo",
-////			Namespace: "bar",
-////			CreationTimestamp: unversioned.Time{
-////				time.Now().Add(10 * time.Second),
-////			},
-////		},
-////	}
-////
-////	ev, err := newEvent(pod, "add")
-////	ev.destination = "anywhere"
-////	if err != nil {
-////		t.Errorf("Unexpected error: %v", err)
-////	}
-////
-////	err = ctrl.AddEvent(ev)
-////	if err != nil {
-////		t.Errorf("Unexpected error: %v", err)
-////	}
-////
-////	// past timestamp should be rejected
-////	ev.timestamp = time.Now().AddDate(-1, 1, 1)
-////	err = ctrl.AddEvent(ev)
-////	if err == nil {
-////		t.Error("Expected timestamp error")
-////	}
-////
-////	// current analytic event but missing UserID, expected default userId
-////	ev, _ = newEvent(pod, "add")
-////	ev.destination = "foo"
-////	ev.timestamp = time.Now()
-////	delete(mockClient.user.Annotations, onlineManagedID)
-////
-////	err = ctrl.AddEvent(ev)
-////	if err != nil {
-////		t.Errorf("Unexpected error: %v", err)
-////	}
-////	if ev.userID != config.DefaultUserIds["anywhere"] {
-////		t.Errorf("Unexpected error: %v", err)
-////	}
-////
-////	// two events accepted above (one rejected for too old)
-////	if len(ctrl.queue.ListKeys()) != 2 {
-////		t.Errorf("Expected queue.length = %d but got %s", 2, len(ctrl.queue.ListKeys()))
-////	}
-////
-////	// bounded queue returns an error when max queue length is exceeded
-////	ctrl.maximumQueueLength = 0
-////	err = ctrl.AddEvent(ev)
-////	if err == nil {
-////		t.Error("Expected maximum queue length error but got nil")
-////	}
-////
-////	if len(ctrl.queue.ListKeys()) != 2 {
-////		t.Errorf("Expected cache size %d but got %d", 2, len(ctrl.queue.ListKeys()))
-////	}
-////}
+//	ctrl.startTime = time.Now().UnixNano()
+//
+//	pod := &api.Pod{
+//		ObjectMeta: api.ObjectMeta{
+//			Name:      "foo",
+//			Namespace: "bar",
+//			CreationTimestamp: unversioned.Time{
+//				time.Now().Add(10 * time.Second),
+//			},
+//		},
+//	}
+//
+//	ev, err := newEvent(pod, "add")
+//	ev.destination = "anywhere"
+//	if err != nil {
+//		t.Errorf("Unexpected error: %v", err)
+//	}
+//
+//	err = ctrl.AddEvent(ev)
+//	if err != nil {
+//		t.Errorf("Unexpected error: %v", err)
+//	}
+//
+//	// past timestamp should be rejected
+//	ev.timestamp = time.Now().AddDate(-1, 1, 1)
+//	err = ctrl.AddEvent(ev)
+//	if err == nil {
+//		t.Error("Expected timestamp error")
+//	}
+//
+//	// current analytic event but missing UserID, expected default userId
+//	ev, _ = newEvent(pod, "add")
+//	ev.destination = "foo"
+//	ev.timestamp = time.Now()
+//	delete(mockClient.user.Annotations, onlineManagedID)
+//
+//	err = ctrl.AddEvent(ev)
+//	if err != nil {
+//		t.Errorf("Unexpected error: %v", err)
+//	}
+//	if ev.userID != config.DefaultUserIds["anywhere"] {
+//		t.Errorf("Unexpected error: %v", err)
+//	}
+//
+//	// two events accepted above (one rejected for too old)
+//	if len(ctrl.queue.ListKeys()) != 2 {
+//		t.Errorf("Expected queue.length = %d but got %s", 2, len(ctrl.queue.ListKeys()))
+//	}
+//
+//	// bounded queue returns an error when max queue length is exceeded
+//	ctrl.maximumQueueLength = 0
+//	err = ctrl.AddEvent(ev)
+//	if err == nil {
+//		t.Error("Expected maximum queue length error but got nil")
+//	}
+//
+//	if len(ctrl.queue.ListKeys()) != 2 {
+//		t.Errorf("Expected cache size %d but got %d", 2, len(ctrl.queue.ListKeys()))
+//	}
+//}
 //
 //func mockProjectWatchFunc(oc osclient.Interface) func(options api.ListOptions) (watch.Interface, error) {
 //	fakeClient := oc.(*testclient.Fake)
