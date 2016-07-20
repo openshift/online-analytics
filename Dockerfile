@@ -1,14 +1,7 @@
-FROM openshift/origin-base
+FROM golang:1.6
 
-RUN yum install -y golang make && yum clean all
+ADD . /go/src/github.com/openshift/online/user-analytics
 
-ENV PATH=$PATH:$GOROOT/bin
-ENV GOPATH=/var/go
-ENV GOBIN=$GOPATH/bin
-
-ADD . $GOPATH/src/github.com/openshift/online/user-analytics
-WORKDIR $GOPATH/src/github.com/openshift/online/user-analytics
-
-RUN make install && cp $GOBIN/user-analytics /usr/bin/user-analytics
-
+WORKDIR /go/src/github.com/openshift/online/user-analytics
+RUN make install test && cp /go/bin/user-analytics /usr/bin/user-analytics
 ENTRYPOINT ["/usr/bin/user-analytics"]
