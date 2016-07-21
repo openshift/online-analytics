@@ -20,6 +20,7 @@ type analyticsEvent struct {
 	// Pod, ReplicationController, etc.
 	objectKind string
 	objectName string
+	objectUID  string
 	// Namespace/Project. Owner of project is analyticEvent owner.
 	objectNamespace string
 	properties      map[string]string
@@ -47,6 +48,7 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 		event:           eventName,
 		objectName:      m.GetName(),
 		objectNamespace: m.GetNamespace(),
+		objectUID:       string(m.GetUID()),
 		properties:      make(map[string]string),
 		timestamp:       time.Now(),
 	}

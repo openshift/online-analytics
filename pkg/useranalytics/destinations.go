@@ -46,7 +46,7 @@ func (d *WoopraDestination) send(params map[string]string) error {
 			endpoint = endpoint + "?%s"
 		}
 		encodedUrl := fmt.Sprintf(endpoint, encodedParams)
-		glog.V(5).Infof("GET request to %s", encodedUrl)
+		glog.V(1).Infof("GET request to %s", encodedUrl)
 		resp, err := d.Client.Get(encodedUrl)
 		if err != nil {
 			return err
@@ -74,6 +74,7 @@ func (d *WoopraDestination) Send(ev *analyticsEvent) error {
 		"cv_project_namespace": ev.objectNamespace,
 		"ce_name":              ev.objectName,
 		"ce_namespace":         ev.objectNamespace,
+		"ce_uid":               ev.objectUID,
 	}
 	for key, value := range ev.properties {
 		params[key] = value
@@ -91,7 +92,7 @@ func (d *IntercomDestination) Send(ev *analyticsEvent) error {
 			"cv_project_namespace": ev.objectNamespace,
 		},
 	}
-	glog.V(5).Infof("Intercom event %#v", iev)
+	glog.V(1).Infof("Intercom event %#v", iev)
 	return d.Client.Save(iev)
 }
 

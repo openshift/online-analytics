@@ -7,15 +7,15 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"k8s.io/kubernetes/pkg/util/rand"
 	"k8s.io/kubernetes/pkg/util/wait"
 
-	"k8s.io/kubernetes/pkg/util/rand"
 	intercom "gopkg.in/intercom/intercom-go.v2"
 )
 
 var _ Destination = &mockDestination{}
 
-type mockDestination struct {}
+type mockDestination struct{}
 
 func (d *mockDestination) Send(ev *analyticsEvent) error {
 	return nil
@@ -68,61 +68,82 @@ func (m *mockIntercomEventClient) Save(ev *intercom.Event) error {
 	return nil
 }
 
-type mockHttpEndpoint struct {
-	port       int
-	method     string
-	handled    int
-	last       string
-	urlPrefix  string
-	// minimum number of milliseconds to handle a request
-	minLatency int
-	// maximum number of milliseconds to handle a request
-	maxLatency int
-	// percent chance of returning HTTP error
-	flakeRate  int
+type MockHttpEndpoint struct {
+	Port            int
+	RequestsHandled int
+	LastRequestURI  string
+	URLPrefix       string
+	// maximum number of milliseconds to handle a request.
+	// 0 for no latency
+	MaxLatency int
+	// percent chance of returning HTTP error, 0 - 100
+	FlakeRate int
+	// contains the unique hash of an event and the number of times it is posted to the endpoint
+	Analytics map[string]int
 }
 
-func (m *mockHttpEndpoint) start(stopCh <-chan struct {}) {
-	if m.flakeRate < 0 {
-		m.flakeRate = 0
+func (m *MockHttpEndpoint) Run(stopCh <-chan struct{}) {
+	if m.FlakeRate < 0 {
+		m.FlakeRate = 0
 	}
-	if m.flakeRate > 100 {
-		m.flakeRate = 100
+	if m.FlakeRate > 100 {
+		m.FlakeRate = 100
 	}
-	go wait.Until(m.serve, 1 * time.Second, stopCh)
-	go wait.Until(m.log, 1 * time.Second, stopCh)
+	m.Analytics = make(map[string]int)
+
+	go wait.Until(m.serve, 1*time.Second, stopCh)
+	go wait.Until(m.log, 1*time.Second, stopCh)
+	glog.Info("Mock endpoint started")
 }
 
-func (m *mockHttpEndpoint) log() {
-	fmt.Printf("MockHttpEndpoint on %d handled %d requests\n", m.port, m.handled)
+func (m *MockHttpEndpoint) log() {
+	fmt.Printf("MockHttpEndpoint on %d handled %d requests\n", m.Port, m.RequestsHandled)
 }
 
-func (m *mockHttpEndpoint) serve() {
-	rand.Seed(time.Now().Unix())
-	http.HandleFunc(fmt.Sprintf("/%s", m.urlPrefix), m.handler)
-	strPort := fmt.Sprintf(":%d", m.port)
+func (m *MockHttpEndpoint) serve() {
+	glog.V(1).Infof("Mock endpoint listening at %s", m.URLPrefix)
+	http.HandleFunc("/", m.handler)
+	strPort := fmt.Sprintf(":%d", m.Port)
 	if err := http.ListenAndServe(strPort, nil); err != nil {
 		glog.Fatal("Could not start server")
 	}
 }
 
-func (m *mockHttpEndpoint) handler(w http.ResponseWriter, r *http.Request) {
-	m.last = r.RequestURI
-	m.handled++
-	rnd := random(m.minLatency, m.maxLatency)
+func (m *MockHttpEndpoint) handler(w http.ResponseWriter, r *http.Request) {
+	m.LastRequestURI = r.RequestURI
+	m.RequestsHandled++
 
-	duration := time.Duration(rnd)
-	latency := duration * time.Millisecond
+	r.ParseForm()
+	host := r.FormValue("host")
+	event := r.FormValue("event")
+	cv_email := r.FormValue("cv_email")
+	cv_project_namespace := r.FormValue("cv_project_namespace")
+	ce_name := r.FormValue("ce_name")
+	ce_namespace := r.FormValue("ce_namespace")
+	ce_uid := r.FormValue("ce_uid")
+
+	hash := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s", host, event, cv_email, cv_project_namespace, ce_name, ce_namespace, ce_uid)
+
+	glog.V(1).Infof("MockEndpoint received %v", hash)
+
+	if _, exists := m.Analytics[hash]; !exists {
+		m.Analytics[hash] = 0
+	}
+	m.Analytics[hash] = m.Analytics[hash] + 1
+
+	rand.Seed(time.Now().Unix())
+	latency := 0 * time.Millisecond
+	if m.MaxLatency > 0 {
+		rnd := rand.Intn(m.MaxLatency)
+		duration := time.Duration(rnd)
+		latency = duration * time.Millisecond
+	}
 	time.Sleep(latency)
 
-	if random(1, 100) <= m.flakeRate {
+	if rand.Intn(100) <= m.FlakeRate {
 		w.WriteHeader(http.StatusBadRequest)
 		fmt.Fprint(w, "sorry error")
 	} else {
-		fmt.Fprintf(w, "latency: %d, uri: %s", latency, m.last)
+		fmt.Fprintf(w, "latency: %d, uri: %s", latency, m.LastRequestURI)
 	}
-}
-
-func random(min, max int) int {
-	return rand.Intn(max - min) + min
 }

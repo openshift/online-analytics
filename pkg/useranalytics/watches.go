@@ -12,12 +12,12 @@ import (
 	osclient "github.com/openshift/origin/pkg/client"
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
 	imageapi "github.com/openshift/origin/pkg/image/api"
-	projectapi "github.com/openshift/origin/pkg/project/api"
+	//	projectapi "github.com/openshift/origin/pkg/project/api"
 	routeapi "github.com/openshift/origin/pkg/route/api"
 	templateapi "github.com/openshift/origin/pkg/template/api"
 )
 
-const onlineManagedID = "openshift.io/online-managed-id"
+const OnlineManagedID = "openshift.io/online-managed-id"
 
 type watchListItem struct {
 	objType   runtime.Object
@@ -27,7 +27,7 @@ type watchListItem struct {
 
 // watchFuncList returns all the objects and watch functions we're using for analytics.
 // projectHackFunc is a workaround that will be removed after OSE is updated and the Project client has a proper watch func.
-func watchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, projectHackFunc func(options api.ListOptions) (watch.Interface, error)) map[string]*watchListItem {
+func WatchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, projectHackFunc func(options api.ListOptions) (watch.Interface, error)) map[string]*watchListItem {
 	return map[string]*watchListItem{
 		// Kubernetes objects
 		"pods": {
@@ -68,11 +68,11 @@ func watchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, pr
 		},
 
 		// Openshift objects
-		"projects": {
-			objType:   &projectapi.Project{},
-			watchFunc: projectHackFunc,
-			isOS:      true,
-		},
+		//		"projects": {
+		//			objType:   &projectapi.Project{},
+		//			watchFunc: projectHackFunc,
+		//			isOS:      true,
+		//		},
 		"deploymentconfigs": {
 			objType: &deployapi.DeploymentConfig{},
 			watchFunc: func(options api.ListOptions) (watch.Interface, error) {

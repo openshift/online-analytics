@@ -31,10 +31,9 @@ type AnalyticsController struct {
 	queue              *cache.FIFO
 	maximumQueueLength int
 	// required to lookup Projects and Users, as needed
-	client osclient.Interface
-	// cache of namespaces->user
-	userNamespaces          map[string]*userapi.User
-	projectStore            cache.Store
+	client                  osclient.Interface
+	kclient                 kclient.Interface
+	namespaceStore          cache.Store
 	userStore               cache.Store
 	defaultUserIds          map[string]string
 	startTime               int64
@@ -68,29 +67,29 @@ type AnalyticsControllerConfig struct {
 
 // NewAnalyticsController creates a new ThirdPartyAnalyticsController
 func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsController, error) {
-	glog.V(5).Infof("Creating user-analytics controller")
+	glog.V(1).Infof("Creating user-analytics controller")
 	ctrl := &AnalyticsController{
 		watchFuncs:              make(map[string]func(options api.ListOptions) (watch.Interface, error)),
 		queue:                   cache.NewFIFO(analyticKeyFunc),
 		destinations:            config.Destinations,
 		client:                  config.OSClient,
-		userNamespaces:          make(map[string]*userapi.User),
+		kclient:                 config.KubeClient,
 		defaultUserIds:          make(map[string]string),
 		maximumQueueLength:      config.MaximumQueueLength,
 		metricsServerPort:       config.MetricsServerPort,
 		metricsPollingFrequency: config.MetricsPollingFrequency,
 		metrics:                 NewStack(10),
 		mutex:                   &sync.Mutex{},
-		projectStore:            cache.NewStore(cache.MetaNamespaceKeyFunc),
+		namespaceStore:          cache.NewStore(cache.MetaNamespaceKeyFunc),
 		userStore:               cache.NewStore(cache.MetaNamespaceKeyFunc),
 		projectWatchFunc:        config.ProjectWatchFunc,
 		userWatchFunc:           config.UserWatchFunc,
 	}
 	for name, value := range config.DefaultUserIds {
 		ctrl.defaultUserIds[name] = value
-		glog.V(5).Infof("Setting default UserID %s for destination %s", value, name)
+		glog.V(1).Infof("Setting default UserID %s for destination %s", value, name)
 	}
-	for name, w := range watchFuncList(config.KubeClient, config.OSClient, config.ProjectWatchFunc) {
+	for name, w := range WatchFuncList(config.KubeClient, config.OSClient, config.ProjectWatchFunc) {
 		ctrl.watchFuncs[name] = w.watchFunc
 	}
 	return ctrl, nil
@@ -106,7 +105,7 @@ func analyticKeyFunc(obj interface{}) (string, error) {
 
 // Run starts all the watches within this controller and starts workers to process events
 func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
-	glog.V(5).Infof("Starting ThirdPartyAnalyticsController\n")
+	glog.V(1).Infof("Starting ThirdPartyAnalyticsController\n")
 
 	c.stopChannel = stopCh
 	c.startTime = time.Now().UnixNano()
@@ -149,13 +148,16 @@ func (c *AnalyticsController) runWatches() {
 			w, err := wfnc(api.ListOptions{})
 			if err != nil {
 				glog.Errorf("error creating watch %s: %v", n, err)
-				return
 			}
 
 			time.Sleep(backoff)
 			backoff = backoff * 2
 			if backoff > 60*time.Second {
 				backoff = 60 * time.Second
+			}
+
+			if w == nil {
+				return
 			}
 
 			for {
@@ -192,15 +194,15 @@ func (c *AnalyticsController) runWatches() {
 }
 
 func (c *AnalyticsController) runProjectWatch() {
-	projectLW := &cache.ListWatch{
+	namespaceLW := &cache.ListWatch{
 		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-			return c.client.Projects().List(options)
+			return c.kclient.Namespaces().List(options)
 		},
 		WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-			return c.projectWatchFunc(options)
+			return c.kclient.Namespaces().Watch(options)
 		},
 	}
-	cache.NewReflector(projectLW, &projectapi.Project{}, c.projectStore, 10*time.Minute).Run()
+	cache.NewReflector(namespaceLW, &api.Namespace{}, c.namespaceStore, 10*time.Minute).Run()
 
 	userLW := &cache.ListWatch{
 		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
@@ -268,7 +270,7 @@ func (c *AnalyticsController) worker() {
 			}
 			err := dest.Send(e)
 			if err != nil {
-				glog.Errorf("Error processing analytic: %v %v", err, e)
+				glog.Errorf("Error processing analytic: %v ", err)
 			}
 			c.eventsHandled++
 		}()
@@ -290,24 +292,18 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 	}
 
 	for destName, _ := range c.destinations {
-		ev.userID = c.getUserId(ev)
-		if ev.userID == "" {
-
-			if id, ok := c.defaultUserIds[destName]; ok {
-				ev.userID = id
-				glog.V(5).Infof("Using default UserID '%s' for analytic %#v", ev.userID, ev)
-			} else {
-				glog.V(5).Infof("No UserID found and no default specified for destination %s  --  %#v", ev.destination, ev)
-				continue
-			}
+		userId, err := c.getUserId(ev)
+		if err != nil {
+			return err
 		}
 
 		e := &analyticsEvent{
-			userID:          ev.userID,
-			objectKind:      ev.objectKind,
+			userID:          userId,
 			event:           ev.event,
+			objectKind:      ev.objectKind,
 			objectName:      ev.objectName,
 			objectNamespace: ev.objectNamespace,
+			objectUID:       ev.objectUID,
 			properties:      make(map[string]string),
 			timestamp:       ev.timestamp,
 			destination:     destName,
@@ -322,43 +318,51 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 	return nil
 }
 
-// getUserId wants to return the external UserID associated with the owner of the event namespace.
-// If an ID cannot be found for any reason, an empty string is returned
-func (c *AnalyticsController) getUserId(ev *analyticsEvent) string {
-	userId := ""
-
-	projectName := ev.objectNamespace
-	if projectName == "" {
+// getUserId returns a unique identifier to associate analytics with. It wants to return, in order:
+// 1. user.Annotations[OnlineManagedID], which is the Intercom ID in the Online environment
+// 2. a default ID associated with the specific destination on the analytic event. Used for testing external endpoints.
+// 3. user.UID for non-Online environment that want analytics (e.g, Dedicated).
+// If an ID cannot be found for any reason, an empty string and error is returned
+func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, error) {
+	namespaceName := ev.objectNamespace
+	if namespaceName == "" {
 		// namespace has no namespace, but its name *is* the namespace
-		projectName = ev.objectName
+		namespaceName = ev.objectName
 	}
 
-	obj, exists, err := c.projectStore.GetByKey(projectName)
+	obj, exists, err := c.namespaceStore.GetByKey(namespaceName)
 	if !exists || err != nil {
-		glog.Errorf("Project %s does not exist in local cache or error: %v", projectName, err)
-		return userId
+		return "", fmt.Errorf("Project %s does not exist in local cache or error: %v", namespaceName, err)
 	}
 
-	project := obj.(*projectapi.Project)
+	namespace := obj.(*api.Namespace)
 
-	username, exists := project.Annotations[projectapi.ProjectRequester]
+	username, exists := namespace.Annotations[projectapi.ProjectRequester]
 	if !exists {
-		glog.Errorf("ProjectRequest annotation does not exist on project %s", projectName)
-		return userId
+		return "", fmt.Errorf("ProjectRequest annotation does not exist on project %s", namespaceName)
 	}
 
 	userObj, exists, err := c.userStore.GetByKey(username)
-	if !exists || err != nil {
-		glog.Errorf("Failed to find user %s: %v", username, err)
-		return userId
+	if err != nil {
+		return "", fmt.Errorf("Failed to find user %s: %v", username, err)
 	}
 
-	user := userObj.(*userapi.User)
-	externalId, exists := user.Annotations[onlineManagedID]
-	if !exists {
-		glog.Errorf("Annotation[%s] not found for username %s. Cannot associate analytic event with distinct user.", onlineManagedID, user.Name)
-		return userId
+	if userObj != nil {
+		user := userObj.(*userapi.User)
+		externalId, exists := user.Annotations[OnlineManagedID]
+		if exists {
+			return externalId, nil
+		}
+
+		// a defaultId is used for local testing against an external provider.
+		if id, ok := c.defaultUserIds[ev.destination]; ok {
+			return id, nil
+		}
+
+		// any non-Online environment (e.g, Dedicated) will never have an externalId
+		// the fallback is UserID
+		return string(user.UID), nil
 	}
 
-	return externalId
+	return "", fmt.Errorf("No suitable ID could be found for analytic %#v", ev)
 }
