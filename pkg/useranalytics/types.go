@@ -23,7 +23,10 @@ type analyticsEvent struct {
 	objectUID  string
 	// Namespace/Project. Owner of project is analyticEvent owner.
 	objectNamespace string
-	properties      map[string]string
+	// instance ID of the controller to help detect dupes
+	controllerID string
+	clusterName  string
+	properties   map[string]string
 	// timestamp of event occurrence
 	timestamp time.Time
 	// the name of the dest to send this event to

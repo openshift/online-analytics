@@ -84,8 +84,9 @@ func main() {
 		MaximumQueueLength:      maximumQueueLength,
 		MetricsServerPort:       metricsServerPort,
 		MetricsPollingFrequency: metricsPollingFrequency,
-		ProjectWatchFunc: useranalytics.RealProjectWatchFunc(openshiftClient),
-		UserWatchFunc: useranalytics.RealUserWatchFunc(openshiftClient),
+		ProjectWatchFunc:        useranalytics.RealProjectWatchFunc(openshiftClient),
+		UserWatchFunc:           useranalytics.RealUserWatchFunc(openshiftClient),
+		ClusterName:             clusterName,
 	}
 
 	if woopraEnabled {

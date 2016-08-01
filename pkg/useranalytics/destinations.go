@@ -75,6 +75,9 @@ func (d *WoopraDestination) Send(ev *analyticsEvent) error {
 		"ce_name":              ev.objectName,
 		"ce_namespace":         ev.objectNamespace,
 		"ce_uid":               ev.objectUID,
+		"ce_timestamp":         ev.timestamp.String(),
+		"ce_cluster":           ev.clusterName,
+		"ce_controller_id":     ev.controllerID,
 	}
 	for key, value := range ev.properties {
 		params[key] = value

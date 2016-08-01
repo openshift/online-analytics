@@ -17,6 +17,7 @@ import (
 	"k8s.io/kubernetes/pkg/client/cache"
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/util"
 	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/watch"
 
@@ -45,6 +46,8 @@ type AnalyticsController struct {
 	stopChannel             <-chan struct{}
 	projectWatchFunc        func(options api.ListOptions) (watch.Interface, error)
 	userWatchFunc           func(options api.ListOptions) (watch.Interface, error)
+	controllerID            string
+	clusterName             string
 }
 
 type metricsSnapshot struct {
@@ -63,6 +66,7 @@ type AnalyticsControllerConfig struct {
 	MetricsPollingFrequency int
 	ProjectWatchFunc        func(options api.ListOptions) (watch.Interface, error)
 	UserWatchFunc           func(options api.ListOptions) (watch.Interface, error)
+	ClusterName             string
 }
 
 // NewAnalyticsController creates a new ThirdPartyAnalyticsController
@@ -84,6 +88,8 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		userStore:               cache.NewStore(cache.MetaNamespaceKeyFunc),
 		projectWatchFunc:        config.ProjectWatchFunc,
 		userWatchFunc:           config.UserWatchFunc,
+		controllerID:            string(util.NewUUID()),
+		clusterName:             config.ClusterName,
 	}
 	for name, value := range config.DefaultUserIds {
 		ctrl.defaultUserIds[name] = value
@@ -184,7 +190,10 @@ func (c *AnalyticsController) runWatches() {
 						} else {
 							// additional info will be set to the analytic and
 							// an instance queued for all destinations
-							c.AddEvent(analytic)
+							err := c.AddEvent(analytic)
+							if err != nil {
+								glog.Errorf("Error adding event: %v - %v", err, analytic)
+							}
 						}
 					}
 				}
@@ -307,6 +316,7 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 			properties:      make(map[string]string),
 			timestamp:       ev.timestamp,
 			destination:     destName,
+			clusterName:     c.clusterName,
 		}
 		for key, value := range ev.properties {
 			e.properties[key] = value
