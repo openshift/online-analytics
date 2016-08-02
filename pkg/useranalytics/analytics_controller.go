@@ -317,6 +317,7 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 			timestamp:       ev.timestamp,
 			destination:     destName,
 			clusterName:     c.clusterName,
+			controllerID:    c.controllerID,
 		}
 		for key, value := range ev.properties {
 			e.properties[key] = value
