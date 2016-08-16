@@ -301,6 +301,7 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 	}
 
 	for destName, _ := range c.destinations {
+		ev.destination = destName // needed here to find default ID by destination
 		userId, err := c.getUserId(ev)
 		if err != nil {
 			return err
