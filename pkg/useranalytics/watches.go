@@ -66,13 +66,7 @@ func WatchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, pr
 				return kubeClient.Namespaces().Watch(options)
 			},
 		},
-
 		// Openshift objects
-		//		"projects": {
-		//			objType:   &projectapi.Project{},
-		//			watchFunc: projectHackFunc,
-		//			isOS:      true,
-		//		},
 		"deploymentconfigs": {
 			objType: &deployapi.DeploymentConfig{},
 			watchFunc: func(options api.ListOptions) (watch.Interface, error) {
@@ -94,15 +88,6 @@ func WatchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, pr
 			},
 			isOS: true,
 		},
-		//		"role-binding": {
-		//			objType: &authorizationapi.RoleBinding{},
-		//			listFunc: func(options api.ListOptions) (runtime.Object, error) {
-		//				return osClient.RoleBindings(api.NamespaceAll).List(options)
-		//			},
-		//			watchFunc: func(options api.ListOptions) (watch.Interface, error) {
-		//				return osClient.RoleBindings(api.NamespaceAll).Watch(options)
-		//			},
-		//		},
 		"templates": {
 			objType: &templateapi.Template{},
 			watchFunc: func(options api.ListOptions) (watch.Interface, error) {

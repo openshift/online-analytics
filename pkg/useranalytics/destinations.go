@@ -70,7 +70,7 @@ func (d *WoopraDestination) Send(ev *analyticsEvent) error {
 	params := map[string]string{
 		"host":                 d.Domain,
 		"event":                ev.event,
-		"cv_email":             ev.objectNamespace,
+		"cv_email":             ev.userID,
 		"cv_project_namespace": ev.objectNamespace,
 		"ce_name":              ev.objectName,
 		"ce_namespace":         ev.objectNamespace,

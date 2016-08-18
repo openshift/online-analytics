@@ -14,6 +14,7 @@ import (
 	projectapi "github.com/openshift/origin/pkg/project/api"
 	userapi "github.com/openshift/origin/pkg/user/api"
 	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/client/cache"
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
@@ -27,10 +28,10 @@ import (
 // AnalyticsController is a controller that Watches & Forwards analytics data to various endpoints.
 // Only new analytics are forwarded. There is no replay.
 type AnalyticsController struct {
-	watchFuncs         map[string]func(options api.ListOptions) (watch.Interface, error)
-	destinations       map[string]Destination
-	queue              *cache.FIFO
-	maximumQueueLength int
+	watchResourceVersions map[string]string
+	destinations          map[string]Destination
+	queue                 *cache.FIFO
+	maximumQueueLength    int
 	// required to lookup Projects and Users, as needed
 	client                  osclient.Interface
 	kclient                 kclient.Interface
@@ -73,7 +74,7 @@ type AnalyticsControllerConfig struct {
 func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsController, error) {
 	glog.V(1).Infof("Creating user-analytics controller")
 	ctrl := &AnalyticsController{
-		watchFuncs:              make(map[string]func(options api.ListOptions) (watch.Interface, error)),
+		watchResourceVersions: make(map[string]string),
 		queue:                   cache.NewFIFO(analyticKeyFunc),
 		destinations:            config.Destinations,
 		client:                  config.OSClient,
@@ -94,9 +95,6 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 	for name, value := range config.DefaultUserIds {
 		ctrl.defaultUserIds[name] = value
 		glog.V(1).Infof("Setting default UserID %s for destination %s", value, name)
-	}
-	for name, w := range WatchFuncList(config.KubeClient, config.OSClient, config.ProjectWatchFunc) {
-		ctrl.watchFuncs[name] = w.watchFunc
 	}
 	return ctrl, nil
 }
@@ -140,18 +138,21 @@ func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 // runWatches will attempt to run all watches in separate goroutines w/ the same stop channel.  Each has its own
 // ability to restart the watch if the inner func doing the work fails for any reason.
 func (c *AnalyticsController) runWatches() {
-	for name, _ := range c.watchFuncs {
+	watchListItems := WatchFuncList(c.kclient, c.client, c.projectWatchFunc)
+	for name, _ := range watchListItems {
+
 		// assign local variable (not in range operator above) so that each
 		// goroutine gets the correct watch function required
-		wfnc := c.watchFuncs[name]
+		wfnc := watchListItems[name]
 		n := name
+		kind := wfnc.objType.GetObjectKind().GroupVersionKind().Kind
 		backoff := 1 * time.Second
 
 		go wait.Until(func() {
 			// any return from this func only exits that invocation of the func.
 			// wait.Until will call it again after its sync period.
 			glog.V(3).Infof("Starting watch for %s", n)
-			w, err := wfnc(api.ListOptions{})
+			w, err := wfnc.watchFunc(api.ListOptions{ResourceVersion: string(c.watchResourceVersions[kind])})
 			if err != nil {
 				glog.Errorf("error creating watch %s: %v", n, err)
 			}
@@ -184,6 +185,16 @@ func (c *AnalyticsController) runWatches() {
 					backoff = 1 * time.Second
 
 					if event.Type == watch.Added || event.Type == watch.Deleted {
+						m, err := meta.Accessor(event.Object)
+						if err != nil {
+							glog.Errorf("Unable to create object meta for %v", event.Object)
+							return
+						}
+						// each watch is a separate go routine
+						c.mutex.Lock()
+						c.watchResourceVersions[kind] = m.GetResourceVersion()
+						c.mutex.Unlock()
+
 						analytic, err := newEvent(event.Object, event.Type)
 						if err != nil {
 							glog.Errorf("Unexpected error creation analytic from watch event %#v", event.Object)
