@@ -151,8 +151,8 @@ func (c *AnalyticsController) runWatches() {
 		go wait.Until(func() {
 			// any return from this func only exits that invocation of the func.
 			// wait.Until will call it again after its sync period.
-			glog.V(3).Infof("Starting watch for %s", n)
-			w, err := wfnc.watchFunc(api.ListOptions{ResourceVersion: string(c.watchResourceVersions[kind])})
+			glog.V(3).Infof("Starting watch for %s with resourceVersion %s", n, c.watchResourceVersions[kind])
+			w, err := wfnc.watchFunc(api.ListOptions{ResourceVersion: c.watchResourceVersions[kind]})
 			if err != nil {
 				glog.Errorf("error creating watch %s: %v", n, err)
 			}
