@@ -26,7 +26,7 @@ func main() {
 	var maximumQueueLength, metricsServerPort, metricsPollingFrequency int
 	var woopraEndpoint, woopraDomain string
 	var woopraUsernameFile, woopraPasswordFile, intercomUsernameFile, intercomPasswordFile string
-	var woopraEnabled, intercomEnabled bool
+	var woopraEnabled, intercomEnabled, localEndpointEnabled bool
 	var woopraDefaultUserId, intercomDefaultUserId string
 
 	flag.BoolVar(&useServiceAccounts, "useServiceAccounts", false, "Connect to OpenShift using a service account")
@@ -34,14 +34,17 @@ func main() {
 	flag.IntVar(&maximumQueueLength, "maximumQueueLength", 1000000, "The maximum number of analytic event items that are internally queued for forwarding")
 	flag.IntVar(&metricsServerPort, "metricsServerPort", 9999, "The port on localhost serving metrics - http://localhost:port/metrics")
 	flag.IntVar(&metricsPollingFrequency, "metricsPollingFrequency", 10, "The number of seconds between metrics snapshots.")
+	flag.BoolVar(&localEndpointEnabled, "localEndpointEnabled", false, "Use a local HTTP endpoint for analytics. Useful for test and dev environments")
+
 	flag.StringVar(&woopraEndpoint, "woopraEndpoint", "http://www.example.com", "The URL to send data to")
+	flag.StringVar(&woopraDefaultUserId, "woopraDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
 	flag.StringVar(&woopraDomain, "woopraDomain", "openshift", "The domain to collect data under")
 	flag.BoolVar(&woopraEnabled, "woopraEnabled", true, "Enable/disable sending data to Woopra")
-	flag.BoolVar(&intercomEnabled, "intercomEnabled", true, "Enable/disable sending data to Intercom")
-	flag.StringVar(&woopraDefaultUserId, "woopraDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
-	flag.StringVar(&intercomDefaultUserId, "intercomDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
 	flag.StringVar(&woopraUsernameFile, "woopraUsernameFile", "", "The filepath to the Secret containing the username.")
 	flag.StringVar(&woopraPasswordFile, "woopraPasswordFile", "", "The filepath to the Secret containing the password.")
+
+	flag.BoolVar(&intercomEnabled, "intercomEnabled", true, "Enable/disable sending data to Intercom")
+	flag.StringVar(&intercomDefaultUserId, "intercomDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
 	flag.StringVar(&intercomUsernameFile, "intercomUsernameFile", "", "The filepath to the Secret containing the username.")
 	flag.StringVar(&intercomPasswordFile, "intercomPasswordFile", "", "The filepath to the Secret containing the password.")
 	flag.Parse()
@@ -122,6 +125,16 @@ func main() {
 		config.DefaultUserIds["intercom"] = intercomDefaultUserId
 	}
 
+	if localEndpointEnabled {
+		config.Destinations["local"] = &useranalytics.WoopraDestination{
+			Method:   "GET",
+			Domain:   "local",
+			Endpoint: "http://127.0.0.1:8888/dest",
+			Client:   useranalytics.NewSimpleHttpClient("", ""),
+		}
+		config.DefaultUserIds["local"] = "local"
+	}
+
 	if len(config.Destinations) == 0 {
 		glog.V(0).Infof("No analytics destinations configured.  Analytics controller will not be started.")
 		os.Exit(5)
@@ -133,6 +146,18 @@ func main() {
 		os.Exit(6)
 	}
 	c := make(chan struct{})
+
+	if localEndpointEnabled {
+		mockEndpoint := useranalytics.MockHttpEndpoint{
+			Port:       8888,
+			URLPrefix:  "/dest",
+			MaxLatency: 0,
+			FlakeRate:  0,
+			DupeCheck: false,
+		}
+		mockEndpoint.Run(c)
+	}
+
 	controller.Run(c, 3)
 	<-c
 

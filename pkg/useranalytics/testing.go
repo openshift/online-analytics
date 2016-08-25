@@ -78,6 +78,7 @@ type MockHttpEndpoint struct {
 	MaxLatency int
 	// percent chance of returning HTTP error, 0 - 100
 	FlakeRate int
+	DupeCheck bool
 	// contains the unique hash of an event and the number of times it is posted to the endpoint
 	Analytics map[string]int
 }
@@ -92,7 +93,7 @@ func (m *MockHttpEndpoint) Run(stopCh <-chan struct{}) {
 	m.Analytics = make(map[string]int)
 
 	go wait.Until(m.serve, 1*time.Second, stopCh)
-	go wait.Until(m.log, 1*time.Second, stopCh)
+	go wait.Until(m.log, 60*time.Second, stopCh)
 	glog.Info("Mock endpoint started")
 }
 
@@ -121,15 +122,18 @@ func (m *MockHttpEndpoint) handler(w http.ResponseWriter, r *http.Request) {
 	ce_name := r.FormValue("ce_name")
 	ce_namespace := r.FormValue("ce_namespace")
 	ce_uid := r.FormValue("ce_uid")
+	ce_timestamp := r.FormValue("ce_timestamp")
 
-	hash := fmt.Sprintf("%s,%s,%s,%s,%s,%s,%s", host, event, cv_email, cv_project_namespace, ce_name, ce_namespace, ce_uid)
+	hash := fmt.Sprintf("%s, %s, %s, %s, %s, %s, %s, %s", host, event, cv_email, cv_project_namespace, ce_name, ce_namespace, ce_uid, ce_timestamp)
 
-	glog.V(1).Infof("MockEndpoint received %v", hash)
+	glog.V(5).Infof("MockEndpoint received %v", hash)
 
-	if _, exists := m.Analytics[hash]; !exists {
-		m.Analytics[hash] = 0
+	if m.DupeCheck {
+		if _, exists := m.Analytics[hash]; !exists {
+			m.Analytics[hash] = 0
+		}
+		m.Analytics[hash] = m.Analytics[hash] + 1
 	}
-	m.Analytics[hash] = m.Analytics[hash] + 1
 
 	rand.Seed(time.Now().Unix())
 	latency := 0 * time.Millisecond

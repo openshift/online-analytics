@@ -308,7 +308,8 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 		return fmt.Errorf("analyticEvent reject, exceeds maximum queue length: %d - %#v", c.maximumQueueLength, ev)
 	}
 	if ev.timestamp.UnixNano() < c.startTime {
-		return fmt.Errorf("analyticEvent is too old: %v", ev)
+		glog.V(5).Infof("Warning: analyticEvent is too old: %v", ev)
+		return nil
 	}
 
 	for destName, _ := range c.destinations {
@@ -387,5 +388,5 @@ func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, error) {
 		return string(user.UID), nil
 	}
 
-	return "", fmt.Errorf("No suitable ID could be found for analytic %#v", ev)
+	return "", fmt.Errorf("No suitable ID could be found for analytic. A user must be logged in for analytics to be counted.  %#v", ev)
 }
