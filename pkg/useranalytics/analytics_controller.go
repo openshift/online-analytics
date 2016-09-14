@@ -23,6 +23,7 @@ import (
 	"k8s.io/kubernetes/pkg/watch"
 
 	"github.com/golang/glog"
+	"github.com/davecgh/go-spew/spew"
 )
 
 // AnalyticsController is a controller that Watches & Forwards analytics data to various endpoints.
@@ -176,7 +177,7 @@ func (c *AnalyticsController) runWatches() {
 					}
 
 					if event.Type == watch.Error {
-						glog.Errorf("Watch channel returned error %v", event)
+						glog.Errorf("Watch channel returned error: %s", spew.Sdump(event))
 						return
 					}
 
