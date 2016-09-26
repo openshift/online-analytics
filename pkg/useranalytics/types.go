@@ -58,6 +58,10 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 
 	// TODO: this is deprecated. Replace with meta.Accessor after rebase.
 	om, err := api.ObjectMetaFor(obj)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to get ObjectMeta for %v", obj)
+	}
+
 	// These funcs are in a newer version of Kube. Rebase is currently underway.
 	//	_ = meta.GetCreationTimestamp()
 	//	_ = meta.GetDeletionTimestamp()
@@ -66,7 +70,11 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 	case watch.Added:
 		analyticEvent.timestamp = om.CreationTimestamp.Time
 	case watch.Deleted:
-		analyticEvent.timestamp = om.DeletionTimestamp.Time
+		// if DeletionTimestamp is nil for any reason, analyticEvent.Timestamp is still 'now'.
+		// future watch restarts won't receive another Deletion event for the same object.
+		if om.DeletionTimestamp != nil {
+			analyticEvent.timestamp = om.DeletionTimestamp.Time
+		}
 	default:
 		return nil, fmt.Errorf("Unknown event %v", eventType)
 	}
