@@ -11,7 +11,7 @@ ENV GOPATH=/go
 LABEL BZComponent="oso-user-analytics-docker"
 LABEL Name="openshift3/oso-user-analytics"
 LABEL Version="v3.3.0.0"
-LABEL Release="1"
+LABEL Release="2"
 LABEL Architecture="x86_64"
 
 ADD . /go/src/github.com/openshift/online/user-analytics
@@ -25,4 +25,3 @@ RUN yum-config-manager --enable rhel-7-server-optional-rpms && \
 WORKDIR /go/src/github.com/openshift/online/user-analytics
 RUN export GOPATH && make install test && cp /go/bin/user-analytics /usr/bin/user-analytics
 ENTRYPOINT ["/usr/bin/user-analytics"]
-
