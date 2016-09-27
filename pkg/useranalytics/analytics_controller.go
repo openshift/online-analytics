@@ -317,7 +317,15 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 		ev.destination = destName // needed here to find default ID by destination
 		userId, err := c.getUserId(ev)
 		if err != nil {
-			return err
+			switch err.reason {
+			case missingProjectError:
+			case requesterAnnotationNotFoundError:
+				glog.V(3).Infoln(err.message)
+			case userNotFoundError:
+			case noIDFoundError:
+				glog.V(5).Infoln(err.message)
+			}
+			return nil
 		}
 
 		e := &analyticsEvent{
@@ -343,12 +351,28 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 	return nil
 }
 
+type userIDError struct {
+	message string
+	reason string
+}
+
+func (u *userIDError) Error() string{
+	return u.message
+}
+
+const(
+	missingProjectError = "ProjectNotFoundError"
+	requesterAnnotationNotFoundError = "RequesterAnnotationNotFoundError"
+	userNotFoundError = "UserNotFoundError"
+	noIDFoundError = "NoIDFoundError"
+)
+
 // getUserId returns a unique identifier to associate analytics with. It wants to return, in order:
 // 1. user.Annotations[OnlineManagedID], which is the Intercom ID in the Online environment
 // 2. a default ID associated with the specific destination on the analytic event. Used for testing external endpoints.
 // 3. user.UID for non-Online environment that want analytics (e.g, Dedicated).
 // If an ID cannot be found for any reason, an empty string and error is returned
-func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, error) {
+func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDError) {
 	namespaceName := ev.objectNamespace
 	if namespaceName == "" {
 		// namespace has no namespace, but its name *is* the namespace
@@ -357,19 +381,28 @@ func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, error) {
 
 	obj, exists, err := c.namespaceStore.GetByKey(namespaceName)
 	if !exists || err != nil {
-		return "", fmt.Errorf("Project %s does not exist in local cache or error: %v", namespaceName, err)
+		return "", &userIDError{
+			fmt.Sprintf("Project %s does not exist in local cache or error: %v", namespaceName, err),
+			missingProjectError,
+		}
 	}
 
 	namespace := obj.(*api.Namespace)
 
 	username, exists := namespace.Annotations[projectapi.ProjectRequester]
 	if !exists {
-		return "", fmt.Errorf("ProjectRequest annotation does not exist on project %s", namespaceName)
+		return "", &userIDError{
+			fmt.Sprintf("ProjectRequest annotation does not exist on project %s", namespaceName),
+			requesterAnnotationNotFoundError,
+		}
 	}
 
 	userObj, exists, err := c.userStore.GetByKey(username)
-	if err != nil {
-		return "", fmt.Errorf("Failed to find user %s: %v", username, err)
+	if err != nil || !exists {
+		return "", &userIDError{
+			fmt.Sprintf("Failed to find user %s: %v", username, err),
+			userNotFoundError,
+		}
 	}
 
 	if userObj != nil {
@@ -389,5 +422,8 @@ func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, error) {
 		return string(user.UID), nil
 	}
 
-	return "", fmt.Errorf("No suitable ID could be found for analytic. A user must be logged in for analytics to be counted.  %#v", ev)
+	return "", &userIDError{
+		fmt.Sprintf("No suitable ID could be found for analytic. A user must be logged in for analytics to be counted.  %#v", ev),
+		noIDFoundError,
+	}
 }
