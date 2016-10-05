@@ -22,17 +22,17 @@ import (
 	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/watch"
 
-	"github.com/golang/glog"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/golang/glog"
 )
 
 // AnalyticsController is a controller that Watches & Forwards analytics data to various endpoints.
 // Only new analytics are forwarded. There is no replay.
 type AnalyticsController struct {
-	watchResourceVersions map[string]string
-	destinations          map[string]Destination
-	queue                 *cache.FIFO
-	maximumQueueLength    int
+	watchResourceVersions   map[string]string
+	destinations            map[string]Destination
+	queue                   *cache.FIFO
+	maximumQueueLength      int
 	// required to lookup Projects and Users, as needed
 	client                  osclient.Interface
 	kclient                 kclient.Interface
@@ -45,9 +45,7 @@ type AnalyticsController struct {
 	eventsHandled           int
 	metrics                 *Stack
 	mutex                   *sync.Mutex
-	stopChannel             <-chan struct{}
-	projectWatchFunc        func(options api.ListOptions) (watch.Interface, error)
-	userWatchFunc           func(options api.ListOptions) (watch.Interface, error)
+	stopChannel             <-chan struct {}
 	controllerID            string
 	clusterName             string
 }
@@ -66,8 +64,6 @@ type AnalyticsControllerConfig struct {
 	MaximumQueueLength      int
 	MetricsServerPort       int
 	MetricsPollingFrequency int
-	ProjectWatchFunc        func(options api.ListOptions) (watch.Interface, error)
-	UserWatchFunc           func(options api.ListOptions) (watch.Interface, error)
 	ClusterName             string
 }
 
@@ -88,8 +84,6 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		mutex:                   &sync.Mutex{},
 		namespaceStore:          cache.NewStore(cache.MetaNamespaceKeyFunc),
 		userStore:               cache.NewStore(cache.MetaNamespaceKeyFunc),
-		projectWatchFunc:        config.ProjectWatchFunc,
-		userWatchFunc:           config.UserWatchFunc,
 		controllerID:            string(util.NewUUID()),
 		clusterName:             config.ClusterName,
 	}
@@ -109,7 +103,7 @@ func analyticKeyFunc(obj interface{}) (string, error) {
 }
 
 // Run starts all the watches within this controller and starts workers to process events
-func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
+func (c *AnalyticsController) Run(stopCh <-chan struct {}, workers int) {
 	glog.V(1).Infof("Starting ThirdPartyAnalyticsController\n")
 
 	c.stopChannel = stopCh
@@ -131,15 +125,15 @@ func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 	c.runWatches()
 
 	// this go routine collects metrics in the background
-	go wait.Until(c.gatherMetrics, time.Duration(c.metricsPollingFrequency)*time.Second, c.stopChannel)
+	go wait.Until(c.gatherMetrics, time.Duration(c.metricsPollingFrequency) * time.Second, c.stopChannel)
 	// this go routine serves metrics for consumption
-	go wait.Until(c.serveMetrics, 1*time.Second, c.stopChannel)
+	go wait.Until(c.serveMetrics, 1 * time.Second, c.stopChannel)
 }
 
 // runWatches will attempt to run all watches in separate goroutines w/ the same stop channel.  Each has its own
 // ability to restart the watch if the inner func doing the work fails for any reason.
 func (c *AnalyticsController) runWatches() {
-	watchListItems := WatchFuncList(c.kclient, c.client, c.projectWatchFunc)
+	watchListItems := WatchFuncList(c.kclient, c.client)
 	for name, _ := range watchListItems {
 
 		// assign local variable (not in range operator above) so that each
@@ -160,11 +154,12 @@ func (c *AnalyticsController) runWatches() {
 
 			time.Sleep(backoff)
 			backoff = backoff * 2
-			if backoff > 60*time.Second {
+			if backoff > 60 * time.Second {
 				backoff = 60 * time.Second
 			}
 
 			if w == nil {
+				glog.Errorf("watch not created for %s, returning", n)
 				return
 			}
 
@@ -181,8 +176,8 @@ func (c *AnalyticsController) runWatches() {
 						return
 					}
 
-					// success means the watch is working.
-					// reset the backoff back to 1s for this watch
+				// success means the watch is working.
+				// reset the backoff back to 1s for this watch
 					backoff = 1 * time.Second
 
 					if event.Type == watch.Added || event.Type == watch.Deleted {
@@ -210,7 +205,7 @@ func (c *AnalyticsController) runWatches() {
 					}
 				}
 			}
-		}, 1*time.Millisecond, c.stopChannel)
+		}, 1 * time.Millisecond, c.stopChannel)
 	}
 }
 
@@ -223,17 +218,17 @@ func (c *AnalyticsController) runProjectWatch() {
 			return c.kclient.Namespaces().Watch(options)
 		},
 	}
-	cache.NewReflector(namespaceLW, &api.Namespace{}, c.namespaceStore, 10*time.Minute).Run()
+	cache.NewReflector(namespaceLW, &api.Namespace{}, c.namespaceStore, 10 * time.Minute).Run()
 
 	userLW := &cache.ListWatch{
 		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
 			return c.client.Users().List(options)
 		},
 		WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-			return c.userWatchFunc(options)
+			return c.client.Users().Watch(options)
 		},
 	}
-	cache.NewReflector(userLW, &userapi.User{}, c.userStore, 10*time.Minute).Run()
+	cache.NewReflector(userLW, &userapi.User{}, c.userStore, 10 * time.Minute).Run()
 }
 
 func (c *AnalyticsController) gatherMetrics() {
@@ -268,32 +263,36 @@ func (c *AnalyticsController) metricsHandler(w http.ResponseWriter, r *http.Requ
 	fmt.Fprint(w, string(b))
 }
 
+func (c *AnalyticsController) processAnalyticFromQueue(obj interface{}) error {
+	e, ok := obj.(*analyticsEvent)
+	if !ok {
+		return fmt.Errorf("Expected analyticEvent object but got %v", obj)
+	}
+
+	if len(e.destination) == 0 {
+		return fmt.Errorf("No destination specified. Ignoring analytic: %v", e)
+	}
+
+	dest, ok := c.destinations[e.destination]
+	if !ok {
+		return fmt.Errorf("Destination %s not found", e.destination)
+	}
+	err := dest.Send(e)
+	if err != nil {
+		return fmt.Errorf("send error: %v ", err)
+	}
+	c.eventsHandled++
+	return nil
+}
+
 // worker runs a worker thread that just dequeues items, processes them, and marks them done.
 func (c *AnalyticsController) worker() {
 	for {
 		func() {
-			obj := c.queue.Pop()
-			e, ok := obj.(*analyticsEvent)
-			if !ok {
-				glog.Error("Expected analyticEvent object but got %v", obj)
-				return
-			}
-
-			if len(e.destination) == 0 {
-				glog.Errorf("No destination specified. Ignoring analytic: %v", e)
-				return
-			}
-
-			dest, ok := c.destinations[e.destination]
-			if !ok {
-				glog.Errorf("Destination %s not found", e.destination)
-				return
-			}
-			err := dest.Send(e)
+			_, err := c.queue.Pop(c.processAnalyticFromQueue)
 			if err != nil {
-				glog.Errorf("Error processing analytic: %v ", err)
+				glog.Errorf("error processing analytic: %v", err)
 			}
-			c.eventsHandled++
 		}()
 	}
 }
@@ -353,14 +352,14 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 
 type userIDError struct {
 	message string
-	reason string
+	reason  string
 }
 
-func (u *userIDError) Error() string{
+func (u *userIDError) Error() string {
 	return u.message
 }
 
-const(
+const (
 	missingProjectError = "ProjectNotFoundError"
 	requesterAnnotationNotFoundError = "RequesterAnnotationNotFoundError"
 	userNotFoundError = "UserNotFoundError"

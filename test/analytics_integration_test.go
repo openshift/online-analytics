@@ -71,8 +71,6 @@ func TestProvisioner(t *testing.T) {
 		MaximumQueueLength:      10000,
 		MetricsServerPort:       9999,
 		MetricsPollingFrequency: 5,
-		ProjectWatchFunc:        useranalytics.RealProjectWatchFunc(openshiftClient),
-		UserWatchFunc:           useranalytics.RealUserWatchFunc(openshiftClient),
 	}
 
 	config.Destinations["mock"] = &useranalytics.WoopraDestination{

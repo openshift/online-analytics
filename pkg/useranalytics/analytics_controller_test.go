@@ -91,8 +91,6 @@ func TestGetUserId(t *testing.T) {
 			MaximumQueueLength:      10000,
 			MetricsServerPort:       9999,
 			MetricsPollingFrequency: 5,
-			ProjectWatchFunc:        RealProjectWatchFunc(oc),
-			UserWatchFunc:           RealUserWatchFunc(oc),
 		}
 		config.Destinations["mock"] = &WoopraDestination{
 			Method:   "GET",
@@ -143,10 +141,11 @@ func TestGetUserId(t *testing.T) {
 		event.destination = "mock"
 
 		userId, err := analyticsController.getUserId(event)
-		if err != nil {
-			t.Errorf("Error gettign UserID %v", err)
+		userIDError := err.(*userIDError)
+		if userIDError != nil {
+		//if err != nil {
+			t.Errorf("Error gettign UserID %#v  %#v", err, userId)
 		}
-
 		if userId != test.expects {
 			t.Errorf("Test %s expects %s but got %s", name, test.expects, userId)
 		}

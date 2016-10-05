@@ -1,8 +1,6 @@
 package useranalytics
 
 import (
-	"fmt"
-
 	"k8s.io/kubernetes/pkg/api"
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
@@ -12,9 +10,9 @@ import (
 	osclient "github.com/openshift/origin/pkg/client"
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
 	imageapi "github.com/openshift/origin/pkg/image/api"
-	//	projectapi "github.com/openshift/origin/pkg/project/api"
 	routeapi "github.com/openshift/origin/pkg/route/api"
 	templateapi "github.com/openshift/origin/pkg/template/api"
+	userapi "github.com/openshift/origin/pkg/user/api"
 )
 
 const OnlineManagedID = "openshift.io/online-managed-id"
@@ -26,8 +24,7 @@ type watchListItem struct {
 }
 
 // watchFuncList returns all the objects and watch functions we're using for analytics.
-// projectHackFunc is a workaround that will be removed after OSE is updated and the Project client has a proper watch func.
-func WatchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, projectHackFunc func(options api.ListOptions) (watch.Interface, error)) map[string]*watchListItem {
+func WatchFuncList(kubeClient kclient.Interface, osClient osclient.Interface) map[string]*watchListItem {
 	return map[string]*watchListItem{
 		// Kubernetes objects
 		"pods": {
@@ -102,29 +99,12 @@ func WatchFuncList(kubeClient kclient.Interface, osClient osclient.Interface, pr
 			},
 			isOS: true,
 		},
-	}
-}
-
-// TODO - remove me when Online gets rebased with latest OSE and a proper Project watch.
-// This is the production implementation while a mock implementation was made in the unit tests.
-// The mock impl cannot be cast to RESTClient.
-func RealProjectWatchFunc(oc osclient.Interface) func(options api.ListOptions) (watch.Interface, error) {
-	return func(options api.ListOptions) (watch.Interface, error) {
-		restClient, ok := oc.(*osclient.Client)
-		if !ok {
-			return nil, fmt.Errorf("client is not RESTClient: %v", oc)
-		}
-		return restClient.Get().Prefix("watch").Resource("projects").VersionedParams(&options, api.ParameterCodec).Watch()
-	}
-}
-
-// same comments as above apply to this hack
-func RealUserWatchFunc(oc osclient.Interface) func(options api.ListOptions) (watch.Interface, error) {
-	return func(options api.ListOptions) (watch.Interface, error) {
-		restClient, ok := oc.(*osclient.Client)
-		if !ok {
-			return nil, fmt.Errorf("client is not RESTClient: %v", oc)
-		}
-		return restClient.Get().Prefix("watch").Resource("users").VersionedParams(&options, api.ParameterCodec).Watch()
+		"users": {
+			objType: &userapi.User{},
+			watchFunc: func(options api.ListOptions) (watch.Interface, error) {
+				return osClient.Users().Watch(options)
+			},
+			isOS: true,
+		},
 	}
 }

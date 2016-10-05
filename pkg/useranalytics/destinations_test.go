@@ -89,7 +89,7 @@ func TestWoopraLive(t *testing.T) {
 	oc := &testclient.Fake{}
 	kc := &ktestclient.Fake{}
 
-	items := WatchFuncList(kc, oc, nil)
+	items := WatchFuncList(kc, oc)
 
 	for _, w := range items {
 		m, err := meta.Accessor(w.objType)

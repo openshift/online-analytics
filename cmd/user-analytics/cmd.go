@@ -18,6 +18,7 @@ import (
 
 	glog "github.com/golang/glog"
 	intercom "gopkg.in/intercom/intercom-go.v2"
+	"github.com/spf13/pflag"
 )
 
 func main() {
@@ -70,10 +71,17 @@ func main() {
 		openshiftClient = oc
 		kubeClient = kc
 	} else {
-		oc, kc, err := clientcmd.NewConfig().Clients()
+		config, err := clientcmd.DefaultClientConfig(pflag.NewFlagSet("empty", pflag.ContinueOnError)).ClientConfig()
 		if err != nil {
-			log.Printf("Error creating out-of-cluster clients: %s", err)
-			os.Exit(4)
+			log.Fatalf("Error loading config: %s", err)
+		}
+		oc, err := osclient.New(config)
+		if err != nil {
+			log.Fatalf("Error creating OpenShift client: %s", err)
+		}
+		kc, err := kclient.New(config)
+		if err != nil {
+			log.Fatalf("Error creating Kubernetes client: %s", err)
 		}
 		openshiftClient = oc
 		kubeClient = kc
@@ -87,8 +95,6 @@ func main() {
 		MaximumQueueLength:      maximumQueueLength,
 		MetricsServerPort:       metricsServerPort,
 		MetricsPollingFrequency: metricsPollingFrequency,
-		ProjectWatchFunc:        useranalytics.RealProjectWatchFunc(openshiftClient),
-		UserWatchFunc:           useranalytics.RealUserWatchFunc(openshiftClient),
 		ClusterName:             clusterName,
 	}
 

@@ -14,27 +14,27 @@ import (
 
 type analyticsEvent struct {
 	// userID of the namespace/project owner.  TODO: change to action owner
-	userID string
+	userID          string
 	// pod_add, secret_delete, etc.
-	event string
+	event           string
 	// Pod, ReplicationController, etc.
-	objectKind string
-	objectName string
-	objectUID  string
+	objectKind      string
+	objectName      string
+	objectUID       string
 	// Namespace/Project. Owner of project is analyticEvent owner.
 	objectNamespace string
 	// instance ID of the controller to help detect dupes
-	controllerID string
-	clusterName  string
-	properties   map[string]string
+	controllerID    string
+	clusterName     string
+	properties      map[string]string
 	// timestamp of event occurrence
-	timestamp time.Time
+	timestamp       time.Time
 	// the name of the dest to send this event to
-	destination string
+	destination     string
 	// unix time when this event was successfully sent to the destination
-	sentTime int64
+	sentTime        int64
 	// any error message that occurs during sending to destination
-	errorMessage string
+	errorMessage    string
 }
 
 func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyticsEvent, error) {
