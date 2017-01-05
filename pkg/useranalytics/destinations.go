@@ -68,16 +68,19 @@ func (d *WoopraDestination) send(params map[string]string) error {
 func (d *WoopraDestination) Send(ev *analyticsEvent) error {
 	// all vendor-specific field mapping to be done here
 	params := map[string]string{
-		"host":                 d.Domain,
-		"event":                ev.event,
-		"cv_email":             ev.userID,
-		"cv_project_namespace": ev.objectNamespace,
-		"ce_name":              ev.objectName,
-		"ce_namespace":         ev.objectNamespace,
-		"ce_uid":               ev.objectUID,
-		"ce_timestamp":         ev.timestamp.String(),
-		"ce_cluster":           ev.clusterName,
-		"ce_controller_id":     ev.controllerID,
+		"host":             d.Domain,
+		"event":            ev.event,
+		"cv_id":            ev.userID,
+		"ce_name":          ev.objectName,
+		"ce_namespace":     ev.objectNamespace,
+		"ce_uid":           ev.objectUID,
+		"ce_timestamp":     ev.timestamp.String(),
+		"ce_created_at":    fmt.Sprintf("%d", ev.timestamp.Unix()),
+		"ce_cluster":       ev.clusterName,
+		"ce_controller_id": ev.controllerID,
+		"timeout":          "1800000",
+		"ip":               "0.0.0.0",
+		"cookie":           ev.userID,
 	}
 	for key, value := range ev.properties {
 		params[key] = value
@@ -105,14 +108,12 @@ type SimpleHttpClient interface {
 	Post(endpoint string, bodyType string, body io.Reader) (resp *http.Response, err error)
 }
 
-func NewSimpleHttpClient(username, password string) SimpleHttpClient {
-	return &realHttpClient{username, password, &http.Client{}}
+func NewSimpleHttpClient() SimpleHttpClient {
+	return &realHttpClient{&http.Client{}}
 }
 
+// Keep this struct in case we want to add secure tracking secret later on
 type realHttpClient struct {
-	// used for basic auth when both strings are non-empty
-	username   string
-	password   string
 	httpClient *http.Client
 }
 
@@ -122,9 +123,6 @@ func (h *realHttpClient) Get(endpoint string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %v", err)
-	}
-	if len(h.username) != 0 && len(h.password) != 0 {
-		req.SetBasicAuth(h.username, h.password)
 	}
 	resp, e := h.httpClient.Do(req)
 	if e != nil {

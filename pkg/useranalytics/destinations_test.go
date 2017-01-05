@@ -1,7 +1,6 @@
 package useranalytics
 
 import (
-	"os"
 	"strings"
 	"testing"
 
@@ -77,15 +76,6 @@ func TestWoopraDestination(t *testing.T) {
 }
 
 func TestWoopraLive(t *testing.T) {
-
-	username := os.Getenv("WOOPRA_USERNAME")
-	password := os.Getenv("WOOPRA_PASSWORD")
-
-	// only run this live test when the variables are provided externally
-	if username == "" || password == "" {
-		return
-	}
-
 	oc := &testclient.Fake{}
 	kc := &ktestclient.Fake{}
 
@@ -105,7 +95,7 @@ func TestWoopraLive(t *testing.T) {
 			Method:   "GET",
 			Endpoint: "http://www.woopra.com/track/ce",
 			Domain:   "dev.openshift.redhat.com",
-			Client:   NewSimpleHttpClient(username, password),
+			Client:   NewSimpleHttpClient(),
 		}
 
 		err = dest.Send(event)

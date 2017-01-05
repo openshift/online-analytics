@@ -17,8 +17,8 @@ import (
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 
 	glog "github.com/golang/glog"
-	intercom "gopkg.in/intercom/intercom-go.v2"
 	"github.com/spf13/pflag"
+	intercom "gopkg.in/intercom/intercom-go.v2"
 )
 
 func main() {
@@ -26,7 +26,7 @@ func main() {
 	var clusterName string
 	var maximumQueueLength, metricsServerPort, metricsPollingFrequency int
 	var woopraEndpoint, woopraDomain string
-	var woopraUsernameFile, woopraPasswordFile, intercomUsernameFile, intercomPasswordFile string
+	var intercomUsernameFile, intercomPasswordFile string
 	var woopraEnabled, intercomEnabled, localEndpointEnabled bool
 	var woopraDefaultUserId, intercomDefaultUserId string
 
@@ -41,8 +41,6 @@ func main() {
 	flag.StringVar(&woopraDefaultUserId, "woopraDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
 	flag.StringVar(&woopraDomain, "woopraDomain", "openshift", "The domain to collect data under")
 	flag.BoolVar(&woopraEnabled, "woopraEnabled", true, "Enable/disable sending data to Woopra")
-	flag.StringVar(&woopraUsernameFile, "woopraUsernameFile", "", "The filepath to the Secret containing the username.")
-	flag.StringVar(&woopraPasswordFile, "woopraPasswordFile", "", "The filepath to the Secret containing the password.")
 
 	flag.BoolVar(&intercomEnabled, "intercomEnabled", true, "Enable/disable sending data to Intercom")
 	flag.StringVar(&intercomDefaultUserId, "intercomDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
@@ -99,15 +97,11 @@ func main() {
 	}
 
 	if woopraEnabled {
-		woopraUsername, woopraPassword, err := getWoopraCredentials(woopraUsernameFile, woopraPasswordFile)
-		if err != nil {
-			glog.Fatal("Error getting Woopra credentials: %v", err)
-		}
 		config.Destinations["woopra"] = &useranalytics.WoopraDestination{
 			Method:   "GET",
 			Domain:   woopraDomain,
 			Endpoint: woopraEndpoint,
-			Client:   useranalytics.NewSimpleHttpClient(woopraUsername, woopraPassword),
+			Client:   useranalytics.NewSimpleHttpClient(),
 		}
 		config.DefaultUserIds["woopra"] = woopraDefaultUserId
 	}
@@ -136,7 +130,7 @@ func main() {
 			Method:   "GET",
 			Domain:   "local",
 			Endpoint: "http://127.0.0.1:8888/dest",
-			Client:   useranalytics.NewSimpleHttpClient("", ""),
+			Client:   useranalytics.NewSimpleHttpClient(),
 		}
 		config.DefaultUserIds["local"] = "local"
 	}
@@ -159,7 +153,7 @@ func main() {
 			URLPrefix:  "/dest",
 			MaxLatency: 0,
 			FlakeRate:  0,
-			DupeCheck: false,
+			DupeCheck:  false,
 		}
 		mockEndpoint.Run(c)
 	}
@@ -180,18 +174,6 @@ func getFromFlagOrFile(value string, file string) string {
 		os.Exit(4)
 	}
 	return strings.TrimSpace(string(bytes))
-}
-
-func getWoopraCredentials(woopraUsernameFile, woopraPasswordFile string) (string, string, error) {
-	username := getFromFlagOrFile("", woopraUsernameFile)
-	password := getFromFlagOrFile("", woopraPasswordFile)
-	if username == "" {
-		return "", "", fmt.Errorf("Could not find WOOPRA_USERNAME at path %s", woopraUsernameFile)
-	}
-	if password == "" {
-		return "", "", fmt.Errorf("Could not find WOOPRA_PASSWORD at path %s", woopraPasswordFile)
-	}
-	return username, password, nil
 }
 
 func getIntercomCredentials(intercomUsernameFile, intercomPasswordFile string) (string, string, error) {

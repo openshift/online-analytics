@@ -96,7 +96,7 @@ func TestGetUserId(t *testing.T) {
 			Method:   "GET",
 			Domain:   "test",
 			Endpoint: "http://127.0.0.1:8888/dest",
-			Client:   NewSimpleHttpClient("", ""),
+			Client:   NewSimpleHttpClient(),
 		}
 
 		if test.defaultId != "" {
@@ -143,7 +143,6 @@ func TestGetUserId(t *testing.T) {
 		userId, err := analyticsController.getUserId(event)
 		userIDError := err.(*userIDError)
 		if userIDError != nil {
-		//if err != nil {
 			t.Errorf("Error gettign UserID %#v  %#v", err, userId)
 		}
 		if userId != test.expects {
