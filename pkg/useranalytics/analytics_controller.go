@@ -29,10 +29,10 @@ import (
 // AnalyticsController is a controller that Watches & Forwards analytics data to various endpoints.
 // Only new analytics are forwarded. There is no replay.
 type AnalyticsController struct {
-	watchResourceVersions   map[string]string
-	destinations            map[string]Destination
-	queue                   *cache.FIFO
-	maximumQueueLength      int
+	watchResourceVersions map[string]string
+	destinations          map[string]Destination
+	queue                 *cache.FIFO
+	maximumQueueLength    int
 	// required to lookup Projects and Users, as needed
 	client                  osclient.Interface
 	kclient                 kclient.Interface
@@ -45,7 +45,7 @@ type AnalyticsController struct {
 	eventsHandled           int
 	metrics                 *Stack
 	mutex                   *sync.Mutex
-	stopChannel             <-chan struct {}
+	stopChannel             <-chan struct{}
 	controllerID            string
 	clusterName             string
 }
@@ -103,7 +103,7 @@ func analyticKeyFunc(obj interface{}) (string, error) {
 }
 
 // Run starts all the watches within this controller and starts workers to process events
-func (c *AnalyticsController) Run(stopCh <-chan struct {}, workers int) {
+func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 	glog.V(1).Infof("Starting ThirdPartyAnalyticsController\n")
 
 	c.stopChannel = stopCh
@@ -125,16 +125,16 @@ func (c *AnalyticsController) Run(stopCh <-chan struct {}, workers int) {
 	c.runWatches()
 
 	// this go routine collects metrics in the background
-	go wait.Until(c.gatherMetrics, time.Duration(c.metricsPollingFrequency) * time.Second, c.stopChannel)
+	go wait.Until(c.gatherMetrics, time.Duration(c.metricsPollingFrequency)*time.Second, c.stopChannel)
 	// this go routine serves metrics for consumption
-	go wait.Until(c.serveMetrics, 1 * time.Second, c.stopChannel)
+	go wait.Until(c.serveMetrics, 1*time.Second, c.stopChannel)
 }
 
 // runWatches will attempt to run all watches in separate goroutines w/ the same stop channel.  Each has its own
 // ability to restart the watch if the inner func doing the work fails for any reason.
 func (c *AnalyticsController) runWatches() {
 	watchListItems := WatchFuncList(c.kclient, c.client)
-	for name, _ := range watchListItems {
+	for name := range watchListItems {
 
 		// assign local variable (not in range operator above) so that each
 		// goroutine gets the correct watch function required
@@ -154,7 +154,7 @@ func (c *AnalyticsController) runWatches() {
 
 			time.Sleep(backoff)
 			backoff = backoff * 2
-			if backoff > 60 * time.Second {
+			if backoff > 60*time.Second {
 				backoff = 60 * time.Second
 			}
 
@@ -176,8 +176,8 @@ func (c *AnalyticsController) runWatches() {
 						return
 					}
 
-				// success means the watch is working.
-				// reset the backoff back to 1s for this watch
+					// success means the watch is working.
+					// reset the backoff back to 1s for this watch
 					backoff = 1 * time.Second
 
 					if event.Type == watch.Added || event.Type == watch.Deleted {
@@ -205,7 +205,7 @@ func (c *AnalyticsController) runWatches() {
 					}
 				}
 			}
-		}, 1 * time.Millisecond, c.stopChannel)
+		}, 1*time.Millisecond, c.stopChannel)
 	}
 }
 
@@ -218,7 +218,7 @@ func (c *AnalyticsController) runProjectWatch() {
 			return c.kclient.Namespaces().Watch(options)
 		},
 	}
-	cache.NewReflector(namespaceLW, &api.Namespace{}, c.namespaceStore, 10 * time.Minute).Run()
+	cache.NewReflector(namespaceLW, &api.Namespace{}, c.namespaceStore, 10*time.Minute).Run()
 
 	userLW := &cache.ListWatch{
 		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
@@ -228,7 +228,7 @@ func (c *AnalyticsController) runProjectWatch() {
 			return c.client.Users().Watch(options)
 		},
 	}
-	cache.NewReflector(userLW, &userapi.User{}, c.userStore, 10 * time.Minute).Run()
+	cache.NewReflector(userLW, &userapi.User{}, c.userStore, 10*time.Minute).Run()
 }
 
 func (c *AnalyticsController) gatherMetrics() {
@@ -312,7 +312,7 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 		return nil
 	}
 
-	for destName, _ := range c.destinations {
+	for destName := range c.destinations {
 		ev.destination = destName // needed here to find default ID by destination
 		userId, err := c.getUserId(ev)
 		if err != nil {
@@ -360,10 +360,10 @@ func (u *userIDError) Error() string {
 }
 
 const (
-	missingProjectError = "ProjectNotFoundError"
+	missingProjectError              = "ProjectNotFoundError"
 	requesterAnnotationNotFoundError = "RequesterAnnotationNotFoundError"
-	userNotFoundError = "UserNotFoundError"
-	noIDFoundError = "NoIDFoundError"
+	userNotFoundError                = "UserNotFoundError"
+	noIDFoundError                   = "NoIDFoundError"
 )
 
 // getUserId returns a unique identifier to associate analytics with. It wants to return, in order:
@@ -372,28 +372,17 @@ const (
 // 3. user.UID for non-Online environment that want analytics (e.g, Dedicated).
 // If an ID cannot be found for any reason, an empty string and error is returned
 func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDError) {
-	namespaceName := ev.objectNamespace
-	if namespaceName == "" {
-		// namespace has no namespace, but its name *is* the namespace
-		namespaceName = ev.objectName
-	}
+	var username string
 
-	obj, exists, err := c.namespaceStore.GetByKey(namespaceName)
-	if !exists || err != nil {
-		return "", &userIDError{
-			fmt.Sprintf("Project %s does not exist in local cache or error: %v", namespaceName, err),
-			missingProjectError,
+	// If it's a user_added event, there may not be a namespace to trigger the event, but we have the username anyway
+	if ev.objectKind == "user" {
+		username = ev.objectName
+	} else {
+		name, err := c.getUsernameFromNamespace(ev)
+		if err != nil {
+			return "", err
 		}
-	}
-
-	namespace := obj.(*api.Namespace)
-
-	username, exists := namespace.Annotations[projectapi.ProjectRequester]
-	if !exists {
-		return "", &userIDError{
-			fmt.Sprintf("ProjectRequest annotation does not exist on project %s", namespaceName),
-			requesterAnnotationNotFoundError,
-		}
+		username = name
 	}
 
 	userObj, exists, err := c.userStore.GetByKey(username)
@@ -425,4 +414,32 @@ func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDErro
 		fmt.Sprintf("No suitable ID could be found for analytic. A user must be logged in for analytics to be counted.  %#v", ev),
 		noIDFoundError,
 	}
+}
+
+func (c *AnalyticsController) getUsernameFromNamespace(ev *analyticsEvent) (string, *userIDError) {
+	namespaceName := ev.objectNamespace
+	if namespaceName == "" {
+		// namespace has no namespace, but its name *is* the namespace
+		namespaceName = ev.objectName
+	}
+
+	obj, exists, err := c.namespaceStore.GetByKey(namespaceName)
+	if !exists || err != nil {
+		return "", &userIDError{
+			fmt.Sprintf("Project %s does not exist in local cache or error: %v", namespaceName, err),
+			missingProjectError,
+		}
+	}
+
+	namespace := obj.(*api.Namespace)
+
+	username, exists := namespace.Annotations[projectapi.ProjectRequester]
+	if !exists {
+		return "", &userIDError{
+			fmt.Sprintf("ProjectRequest annotation does not exist on project %s", namespaceName),
+			requesterAnnotationNotFoundError,
+		}
+	}
+
+	return username, nil
 }
