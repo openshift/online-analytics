@@ -77,7 +77,7 @@ func TestProvisioner(t *testing.T) {
 		Method:   "GET",
 		Domain:   "test",
 		Endpoint: "http://127.0.0.1:8888/dest",
-		Client:   useranalytics.NewSimpleHttpClient("", ""),
+		Client:   useranalytics.NewSimpleHttpClient(),
 	}
 
 	analyticsController, err := useranalytics.NewAnalyticsController(config)
