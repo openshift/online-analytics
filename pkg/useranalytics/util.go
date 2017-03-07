@@ -29,7 +29,7 @@ func (s *Stack) Max() int {
 
 // Push a new element onto the stack
 func (s *Stack) Push(value interface{}) {
-	if s.size + 1 > s.max {
+	if s.size+1 > s.max {
 		if last := s.PopLast(); last == nil {
 			panic("Unexpected nil in stack")
 		}

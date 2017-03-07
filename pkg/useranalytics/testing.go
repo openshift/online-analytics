@@ -15,7 +15,7 @@ import (
 
 var _ Destination = &mockDestination{}
 
-type mockDestination struct {}
+type mockDestination struct{}
 
 func (d *mockDestination) Send(ev *analyticsEvent) error {
 	return nil
@@ -75,15 +75,15 @@ type MockHttpEndpoint struct {
 	URLPrefix       string
 	// maximum number of milliseconds to handle a request.
 	// 0 for no latency
-	MaxLatency      int
+	MaxLatency int
 	// percent chance of returning HTTP error, 0 - 100
-	FlakeRate       int
-	DupeCheck       bool
+	FlakeRate int
+	DupeCheck bool
 	// contains the unique hash of an event and the number of times it is posted to the endpoint
-	Analytics       map[string]int
+	Analytics map[string]int
 }
 
-func (m *MockHttpEndpoint) Run(stopCh <-chan struct {}) {
+func (m *MockHttpEndpoint) Run(stopCh <-chan struct{}) {
 	if m.FlakeRate < 0 {
 		m.FlakeRate = 0
 	}
@@ -92,8 +92,8 @@ func (m *MockHttpEndpoint) Run(stopCh <-chan struct {}) {
 	}
 	m.Analytics = make(map[string]int)
 
-	go wait.Until(m.serve, 1 * time.Second, stopCh)
-	go wait.Until(m.log, 60 * time.Second, stopCh)
+	go wait.Until(m.serve, 1*time.Second, stopCh)
+	go wait.Until(m.log, 60*time.Second, stopCh)
 	glog.Info("Mock endpoint started")
 }
 

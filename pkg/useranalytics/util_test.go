@@ -1,6 +1,5 @@
 package useranalytics
 
-
 import (
 	"testing"
 )
@@ -30,7 +29,7 @@ func TestStack(t *testing.T) {
 	if items[0].(int) != luckyNumber {
 		t.Errorf("Expected %d but got %d", luckyNumber, items[0].(int))
 	}
-	if items[len(items) - 1].(int) != (luckyNumber - stack.Max()) + 1 {
+	if items[len(items)-1].(int) != (luckyNumber-stack.Max())+1 {
 		t.Errorf("Expected %d but got %d", luckyNumber, items[0].(int))
 	}
 

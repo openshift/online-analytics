@@ -5,13 +5,13 @@
 
 FROM rhel7.2:7.2-released
 
-ENV PATH /go/bin:/usr/local/go/bin:$PATH
-ENV GOPATH=/go
+ENV PATH=/go/bin:$PATH \
+    GOPATH=/go
 
-LABEL BZComponent="oso-user-analytics-docker" \
-      Name="openshift3/oso-user-analytics" \
-      Version="v3.3.0.0" \
-      Architecture="x86_64"
+LABEL com.redhat.component="oso-user-analytics-docker" \
+      name="openshift3/oso-user-analytics" \
+      version="v3.3.0.0" \
+      architecture="x86_64"
 
 ADD . /go/src/github.com/openshift/online/user-analytics
 
@@ -22,5 +22,5 @@ RUN yum-config-manager --enable rhel-7-server-optional-rpms && \
     yum clean all -y
 
 WORKDIR /go/src/github.com/openshift/online/user-analytics
-RUN export GOPATH && make install test && cp /go/bin/user-analytics /usr/bin/user-analytics
-ENTRYPOINT ["/usr/bin/user-analytics"]
+RUN make build TARGET=prod
+ENTRYPOINT ["user-analytics"]
