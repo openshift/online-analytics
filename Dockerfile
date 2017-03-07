@@ -8,10 +8,10 @@ FROM rhel7.2:7.2-released
 ENV PATH /go/bin:/usr/local/go/bin:$PATH
 ENV GOPATH=/go
 
-LABEL BZComponent="oso-user-analytics-docker"
-LABEL Name="openshift3/oso-user-analytics"
-LABEL Version="v3.3.0.0"
-LABEL Architecture="x86_64"
+LABEL BZComponent="oso-user-analytics-docker" \
+      Name="openshift3/oso-user-analytics" \
+      Version="v3.3.0.0" \
+      Architecture="x86_64"
 
 ADD . /go/src/github.com/openshift/online/user-analytics
 
