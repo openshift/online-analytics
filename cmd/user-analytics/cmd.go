@@ -28,7 +28,7 @@ func main() {
 	var woopraEndpoint, woopraDomain string
 	var intercomUsernameFile, intercomPasswordFile string
 	var woopraEnabled, intercomEnabled, localEndpointEnabled bool
-	var woopraDefaultUserId, intercomDefaultUserId string
+	var userKeyStrategy, userKeyAnnotation string
 
 	flag.BoolVar(&useServiceAccounts, "useServiceAccounts", false, "Connect to OpenShift using a service account")
 	flag.StringVar(&clusterName, "clusterName", "kubernetes", "Cluster name")
@@ -38,14 +38,15 @@ func main() {
 	flag.BoolVar(&localEndpointEnabled, "localEndpointEnabled", false, "Use a local HTTP endpoint for analytics. Useful for test and dev environments")
 
 	flag.StringVar(&woopraEndpoint, "woopraEndpoint", "http://www.example.com", "The URL to send data to")
-	flag.StringVar(&woopraDefaultUserId, "woopraDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
 	flag.StringVar(&woopraDomain, "woopraDomain", "openshift", "The domain to collect data under")
 	flag.BoolVar(&woopraEnabled, "woopraEnabled", true, "Enable/disable sending data to Woopra")
 
 	flag.BoolVar(&intercomEnabled, "intercomEnabled", true, "Enable/disable sending data to Intercom")
-	flag.StringVar(&intercomDefaultUserId, "intercomDefaultUserId", "", "The UserID to use an analyticEvent owner cannot be found. Useful for testing.")
 	flag.StringVar(&intercomUsernameFile, "intercomUsernameFile", "", "The filepath to the Secret containing the username.")
 	flag.StringVar(&intercomPasswordFile, "intercomPasswordFile", "", "The filepath to the Secret containing the password.")
+
+	flag.StringVar(&userKeyStrategy, "userKeyStrategy", useranalytics.KeyStrategyUID, "Strategy used to key users in Woopra. Options are [annotation|name|uid]")
+	flag.StringVar(&userKeyAnnotation, "userKeyAnnotation", useranalytics.OnlineManagedID, "User annotation to use if userKeyStrategy=annotation")
 	flag.Parse()
 
 	var kubeClient kclient.Interface
@@ -85,15 +86,23 @@ func main() {
 		kubeClient = kc
 	}
 
+	if !validateKeyStrategy(userKeyStrategy) {
+		log.Fatalf("Must set a valid userKeyStrategy.")
+	} else if userKeyStrategy == "annotation" {
+		if userKeyAnnotation == "" {
+			log.Fatalf("Must set a userKeyAnnotation when using userKeyStrategy=annotation.")
+		}
+	}
 	config := &useranalytics.AnalyticsControllerConfig{
 		Destinations:            make(map[string]useranalytics.Destination),
-		DefaultUserIds:          make(map[string]string),
 		KubeClient:              kubeClient,
 		OSClient:                openshiftClient,
 		MaximumQueueLength:      maximumQueueLength,
 		MetricsServerPort:       metricsServerPort,
 		MetricsPollingFrequency: metricsPollingFrequency,
 		ClusterName:             clusterName,
+		UserKeyStrategy:         userKeyStrategy,
+		UserKeyAnnotation:       userKeyAnnotation,
 	}
 
 	if woopraEnabled {
@@ -103,7 +112,6 @@ func main() {
 			Endpoint: woopraEndpoint,
 			Client:   useranalytics.NewSimpleHttpClient(),
 		}
-		config.DefaultUserIds["woopra"] = woopraDefaultUserId
 	}
 
 	if intercomEnabled {
@@ -122,7 +130,6 @@ func main() {
 		config.Destinations["intercom"] = &useranalytics.IntercomDestination{
 			Client: useranalytics.NewIntercomEventClient(intercom.NewClient(appId, appKey)),
 		}
-		config.DefaultUserIds["intercom"] = intercomDefaultUserId
 	}
 
 	if localEndpointEnabled {
@@ -132,7 +139,6 @@ func main() {
 			Endpoint: "http://127.0.0.1:8888/dest",
 			Client:   useranalytics.NewSimpleHttpClient(),
 		}
-		config.DefaultUserIds["local"] = "local"
 	}
 
 	if len(config.Destinations) == 0 {
@@ -186,4 +192,16 @@ func getIntercomCredentials(intercomUsernameFile, intercomPasswordFile string) (
 		return "", "", fmt.Errorf("Could not find INTERCOM_PASSWORD at path %s", intercomPasswordFile)
 	}
 	return username, password, nil
+}
+
+func validateKeyStrategy(strategy string) bool {
+	strategies := map[string]bool{
+		useranalytics.KeyStrategyAnnotation: true,
+		useranalytics.KeyStrategyName:       true,
+		useranalytics.KeyStrategyUID:        true,
+	}
+	if _, exists := strategies[strategy]; exists {
+		return true
+	}
+	return false
 }

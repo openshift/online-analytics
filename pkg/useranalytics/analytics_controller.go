@@ -26,6 +26,11 @@ import (
 	"github.com/golang/glog"
 )
 
+const KeyStrategyAnnotation = "annotation"
+const KeyStrategyName = "name"
+const KeyStrategyUID = "uid"
+const OnlineManagedID = "openshift.io/online-managed-id"
+
 // AnalyticsController is a controller that Watches & Forwards analytics data to various endpoints.
 // Only new analytics are forwarded. There is no replay.
 type AnalyticsController struct {
@@ -38,7 +43,6 @@ type AnalyticsController struct {
 	kclient                 kclient.Interface
 	namespaceStore          cache.Store
 	userStore               cache.Store
-	defaultUserIds          map[string]string
 	startTime               int64
 	metricsServerPort       int
 	metricsPollingFrequency int
@@ -48,6 +52,8 @@ type AnalyticsController struct {
 	stopChannel             <-chan struct{}
 	controllerID            string
 	clusterName             string
+	userKeyStrategy         string
+	userKeyAnnotation       string
 }
 
 type metricsSnapshot struct {
@@ -58,13 +64,14 @@ type metricsSnapshot struct {
 
 type AnalyticsControllerConfig struct {
 	Destinations            map[string]Destination
-	DefaultUserIds          map[string]string
 	KubeClient              kclient.Interface
 	OSClient                osclient.Interface
 	MaximumQueueLength      int
 	MetricsServerPort       int
 	MetricsPollingFrequency int
 	ClusterName             string
+	UserKeyStrategy         string
+	UserKeyAnnotation       string
 }
 
 // NewAnalyticsController creates a new ThirdPartyAnalyticsController
@@ -76,7 +83,6 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		destinations:            config.Destinations,
 		client:                  config.OSClient,
 		kclient:                 config.KubeClient,
-		defaultUserIds:          make(map[string]string),
 		maximumQueueLength:      config.MaximumQueueLength,
 		metricsServerPort:       config.MetricsServerPort,
 		metricsPollingFrequency: config.MetricsPollingFrequency,
@@ -86,10 +92,8 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		userStore:               cache.NewStore(cache.MetaNamespaceKeyFunc),
 		controllerID:            string(util.NewUUID()),
 		clusterName:             config.ClusterName,
-	}
-	for name, value := range config.DefaultUserIds {
-		ctrl.defaultUserIds[name] = value
-		glog.V(1).Infof("Setting default UserID %s for destination %s", value, name)
+		userKeyStrategy:         config.UserKeyStrategy,
+		userKeyAnnotation:       config.UserKeyAnnotation,
 	}
 	return ctrl, nil
 }
@@ -393,21 +397,49 @@ func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDErro
 		}
 	}
 
-	if userObj != nil {
-		user := userObj.(*userapi.User)
-		externalId, exists := user.Annotations[OnlineManagedID]
+	if userObj == nil {
+		return "", &userIDError{
+			fmt.Sprintf("User object nil when trying to get user id"),
+			noIDFoundError,
+		}
+	}
+	user := userObj.(*userapi.User)
+	switch c.userKeyStrategy {
+	case KeyStrategyAnnotation:
+		externalId, exists := user.Annotations[c.userKeyAnnotation]
 		if exists {
-			return externalId, nil
+			if len(externalId) > 0 {
+				return externalId, nil
+			}
+		}
+		return "", &userIDError{
+			fmt.Sprintf("Annotation %s does not exist", c.userKeyAnnotation),
+			userNotFoundError,
 		}
 
-		// a defaultId is used for local testing against an external provider.
-		if id, ok := c.defaultUserIds[ev.destination]; ok {
-			return id, nil
+	case KeyStrategyName:
+		if len(user.Name) > 0 {
+			return user.Name, nil
+		}
+		return "", &userIDError{
+			fmt.Sprintf("Username does not exist"),
+			userNotFoundError,
 		}
 
+	case KeyStrategyUID:
 		// any non-Online environment (e.g, Dedicated) will never have an externalId
 		// the fallback is UserID
-		return string(user.UID), nil
+		uid := string(user.UID)
+		if len(uid) > 0 {
+			return uid, nil
+		}
+		return "", &userIDError{
+			fmt.Sprintf("User UID does not exist"),
+			userNotFoundError,
+		}
+
+	default:
+		panic("Invalid user key strategy set")
 	}
 
 	return "", &userIDError{

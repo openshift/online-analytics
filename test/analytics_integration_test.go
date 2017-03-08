@@ -65,7 +65,6 @@ func TestProvisioner(t *testing.T) {
 
 	config := &useranalytics.AnalyticsControllerConfig{
 		Destinations:            make(map[string]useranalytics.Destination),
-		DefaultUserIds:          make(map[string]string),
 		KubeClient:              kubeClient,
 		OSClient:                openshiftClient,
 		MaximumQueueLength:      10000,
@@ -124,7 +123,7 @@ func generateUserAndNamespace(harness *testHarness) {
 		ObjectMeta: api.ObjectMeta{
 			Name: "foo-user",
 			Annotations: map[string]string{
-				useranalytics.OnlineManagedID: string(util.NewUUID()),
+				OnlineManagedID: string(util.NewUUID()),
 			},
 		},
 	})

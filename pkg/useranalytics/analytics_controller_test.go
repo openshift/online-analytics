@@ -61,49 +61,46 @@ func TestGetUserId(t *testing.T) {
 		defaultId       string
 		onlineManagedId string
 		expects         string
+		config          *AnalyticsControllerConfig
 	}{
 		"has-managed-online-id": {
-			defaultId:       "",
 			onlineManagedId: "foobar",
 			expects:         "foobar",
-		},
-		"uses-default-id": {
-			defaultId:       "fizzbuzz",
-			onlineManagedId: "",
-			expects:         "fizzbuzz",
+			config: &AnalyticsControllerConfig{
+				Destinations:            make(map[string]Destination),
+				KubeClient:              &ktestclient.Fake{},
+				OSClient:                &testclient.Fake{},
+				MaximumQueueLength:      10000,
+				MetricsServerPort:       9999,
+				MetricsPollingFrequency: 5,
+				UserKeyAnnotation:       "openshift.io/online-managed-id",
+				UserKeyStrategy:         "annotation",
+			},
 		},
 		"fallback-to-user-uid": {
-			defaultId:       "",
 			onlineManagedId: "",
 			expects:         "abc123",
+			config: &AnalyticsControllerConfig{
+				Destinations:            make(map[string]Destination),
+				KubeClient:              &ktestclient.Fake{},
+				OSClient:                &testclient.Fake{},
+				MaximumQueueLength:      10000,
+				MetricsServerPort:       9999,
+				MetricsPollingFrequency: 5,
+				UserKeyStrategy:         "uid",
+			},
 		},
 	}
 
 	for name, test := range tests {
-		oc := &testclient.Fake{}
-		kc := &ktestclient.Fake{}
-
-		config := &AnalyticsControllerConfig{
-			Destinations:            make(map[string]Destination),
-			DefaultUserIds:          make(map[string]string),
-			KubeClient:              kc,
-			OSClient:                oc,
-			MaximumQueueLength:      10000,
-			MetricsServerPort:       9999,
-			MetricsPollingFrequency: 5,
-		}
-		config.Destinations["mock"] = &WoopraDestination{
+		test.config.Destinations["mock"] = &WoopraDestination{
 			Method:   "GET",
 			Domain:   "test",
 			Endpoint: "http://127.0.0.1:8888/dest",
 			Client:   NewSimpleHttpClient(),
 		}
 
-		if test.defaultId != "" {
-			config.DefaultUserIds["mock"] = test.defaultId
-		}
-
-		analyticsController, err := NewAnalyticsController(config)
+		analyticsController, err := NewAnalyticsController(test.config)
 		if err != nil {
 			t.Fatalf("Error creating controller %v", err)
 		}
@@ -116,7 +113,7 @@ func TestGetUserId(t *testing.T) {
 		}
 		if test.onlineManagedId != "" {
 			user.Annotations = map[string]string{
-				OnlineManagedID: test.onlineManagedId,
+				analyticsController.userKeyAnnotation: test.onlineManagedId,
 			}
 		}
 
@@ -143,7 +140,7 @@ func TestGetUserId(t *testing.T) {
 		userId, err := analyticsController.getUserId(event)
 		userIDError := err.(*userIDError)
 		if userIDError != nil {
-			t.Errorf("Error gettign UserID %#v  %#v", err, userId)
+			t.Errorf("Error getting UserID %#v  %#v", err, userId)
 		}
 		if userId != test.expects {
 			t.Errorf("Test %s expects %s but got %s", name, test.expects, userId)

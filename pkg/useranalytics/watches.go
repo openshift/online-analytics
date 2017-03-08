@@ -15,8 +15,6 @@ import (
 	userapi "github.com/openshift/origin/pkg/user/api"
 )
 
-const OnlineManagedID = "openshift.io/online-managed-id"
-
 type watchListItem struct {
 	objType   runtime.Object
 	watchFunc func(options api.ListOptions) (watch.Interface, error)
