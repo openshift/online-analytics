@@ -18,7 +18,7 @@ import (
 	"k8s.io/kubernetes/pkg/client/cache"
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/uuid"
 	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/watch"
 
@@ -90,7 +90,7 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		mutex:                   &sync.Mutex{},
 		namespaceStore:          cache.NewStore(cache.MetaNamespaceKeyFunc),
 		userStore:               cache.NewStore(cache.MetaNamespaceKeyFunc),
-		controllerID:            string(util.NewUUID()),
+		controllerID:            string(uuid.NewUUID()),
 		clusterName:             config.ClusterName,
 		userKeyStrategy:         config.UserKeyStrategy,
 		userKeyAnnotation:       config.UserKeyAnnotation,
@@ -249,7 +249,6 @@ func (c *AnalyticsController) gatherMetrics() {
 
 func (c *AnalyticsController) serveMetrics() {
 	http.HandleFunc("/metrics", c.metricsHandler)
-	strPort := fmt.Sprintf(":%d", c.metricsServerPort)
 	glog.Infof("Starting metrics server on port %s", strPort)
 	if err := http.ListenAndServe(strPort, nil); err != nil {
 		glog.Fatal("Could not start server")

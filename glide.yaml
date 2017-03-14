@@ -1,0 +1,17 @@
+package: github.com/openshift/online/user-analytics
+
+import:
+# This is the core Origin dependency.
+- package: github.com/openshift/origin
+  version: v3.4.0.23
+  repo:    git@github.com:openshift/ose.git
+  vcs:     git
+
+- package: github.com/prometheus/client_golang/prometheus
+  version: 6373fd93345740fc045eab648524bcbb65c3e690
+
+- package: gopkg.in/intercom/intercom-go.v2
+  version: ee325a6ac87258f0397775ae080436f2e0475029
+
+- package: github.com/google/go-querystring/query
+  version: 53e6ce116135b80d037921a7fdd5138cf32d7a8a
