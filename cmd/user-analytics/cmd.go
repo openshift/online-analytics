@@ -24,16 +24,18 @@ import (
 func main() {
 	var useServiceAccounts bool
 	var clusterName string
-	var maximumQueueLength, metricsServerPort, metricsPollingFrequency int
+	var maximumQueueLength, metricsPollingFrequency int
 	var woopraEndpoint, woopraDomain string
 	var intercomUsernameFile, intercomPasswordFile string
 	var woopraEnabled, intercomEnabled, localEndpointEnabled bool
 	var userKeyStrategy, userKeyAnnotation string
+	var metricsBindAddr string
+	var collectRuntime, collectWoopra, collectQueue bool
 
 	flag.BoolVar(&useServiceAccounts, "useServiceAccounts", false, "Connect to OpenShift using a service account")
 	flag.StringVar(&clusterName, "clusterName", "kubernetes", "Cluster name")
 	flag.IntVar(&maximumQueueLength, "maximumQueueLength", 1000000, "The maximum number of analytic event items that are internally queued for forwarding")
-	flag.IntVar(&metricsServerPort, "metricsServerPort", 9999, "The port on localhost serving metrics - http://localhost:port/metrics")
+	flag.StringVar(&metricsBindAddr, "metricsBindAddr", ":9999", "The address on localhost serving metrics - http://localhost:port/metrics")
 	flag.IntVar(&metricsPollingFrequency, "metricsPollingFrequency", 10, "The number of seconds between metrics snapshots.")
 	flag.BoolVar(&localEndpointEnabled, "localEndpointEnabled", false, "Use a local HTTP endpoint for analytics. Useful for test and dev environments")
 
@@ -47,6 +49,10 @@ func main() {
 
 	flag.StringVar(&userKeyStrategy, "userKeyStrategy", useranalytics.KeyStrategyUID, "Strategy used to key users in Woopra. Options are [annotation|name|uid]")
 	flag.StringVar(&userKeyAnnotation, "userKeyAnnotation", useranalytics.OnlineManagedID, "User annotation to use if userKeyStrategy=annotation")
+
+	flag.BoolVar(&collectRuntime, "collectRuntime", true, "Enable runtime metrics")
+	flag.BoolVar(&collectWoopra, "collectWoopra", true, "Enable woopra metrics")
+	flag.BoolVar(&collectQueue, "collectQueue", true, "Enable queue metrics")
 	flag.Parse()
 
 	var kubeClient kclient.Interface
@@ -98,7 +104,6 @@ func main() {
 		KubeClient:              kubeClient,
 		OSClient:                openshiftClient,
 		MaximumQueueLength:      maximumQueueLength,
-		MetricsServerPort:       metricsServerPort,
 		MetricsPollingFrequency: metricsPollingFrequency,
 		ClusterName:             clusterName,
 		UserKeyStrategy:         userKeyStrategy,
@@ -151,6 +156,28 @@ func main() {
 		glog.Errorf("Error creating controller: %v", err)
 		os.Exit(6)
 	}
+
+	go func() {
+		metricsConfig := useranalytics.MetricsConfig{
+			BindAddr:       metricsBindAddr,
+			CollectRuntime: collectRuntime,
+			CollectWoopra:  collectWoopra,
+			CollectQueue:   collectQueue,
+		}
+		server := &useranalytics.MetricsServer{
+			Config:     metricsConfig,
+			Controller: controller,
+		}
+
+		if woopraEnabled {
+			server.WoopraClient = config.Destinations["woopra"].(*useranalytics.WoopraDestination)
+		}
+		err := server.Serve()
+		if err != nil {
+			glog.Errorf("Error running metrics server: %s", err)
+		}
+	}()
+
 	c := make(chan struct{})
 
 	if localEndpointEnabled {
