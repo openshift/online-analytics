@@ -2,6 +2,7 @@ package useranalytics
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -117,6 +118,9 @@ func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 	// if its internal forever loop returns/exits for any reason.
 	// this function only needs to be called once.
 	c.runWatches()
+
+	http.HandleFunc("/healthz", HealthHandler)
+	http.HandleFunc("/healthz/ready", HealthHandler)
 }
 
 // runWatches will attempt to run all watches in separate goroutines w/ the same stop channel.  Each has its own

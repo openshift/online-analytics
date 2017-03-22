@@ -81,13 +81,8 @@ func (s *MetricsServer) Serve() error {
 		ErrorLog: &logWrapper{},
 	})
 
-	mux := http.NewServeMux()
-	mux.Handle(MetricsEndpoint, handler)
-	server := &http.Server{
-		Addr:    s.Config.BindAddr,
-		Handler: mux,
-	}
-	return server.ListenAndServe()
+	http.Handle(MetricsEndpoint, handler)
+	return http.ListenAndServe(s.Config.BindAddr, nil)
 }
 
 type logWrapper struct{}
@@ -171,4 +166,10 @@ func (c *EventsCollector) Collect(ch chan<- prometheus.Metric) {
 		prometheus.GaugeValue,
 		events,
 	)
+}
+
+// HealthHandler handles returning a simple 200 response on an http request
+func HealthHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

@@ -35,7 +35,7 @@ func main() {
 	flag.BoolVar(&useServiceAccounts, "useServiceAccounts", false, "Connect to OpenShift using a service account")
 	flag.StringVar(&clusterName, "clusterName", "kubernetes", "Cluster name")
 	flag.IntVar(&maximumQueueLength, "maximumQueueLength", 1000000, "The maximum number of analytic event items that are internally queued for forwarding")
-	flag.StringVar(&metricsBindAddr, "metricsBindAddr", ":9999", "The address on localhost serving metrics - http://localhost:port/metrics")
+	flag.StringVar(&metricsBindAddr, "metricsBindAddr", ":8080", "The address on localhost serving metrics - http://localhost:port/metrics")
 	flag.IntVar(&metricsPollingFrequency, "metricsPollingFrequency", 10, "The number of seconds between metrics snapshots.")
 	flag.BoolVar(&localEndpointEnabled, "localEndpointEnabled", false, "Use a local HTTP endpoint for analytics. Useful for test and dev environments")
 
