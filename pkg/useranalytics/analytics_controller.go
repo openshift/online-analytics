@@ -1,7 +1,6 @@
 package useranalytics
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -18,7 +17,7 @@ import (
 	"k8s.io/kubernetes/pkg/client/cache"
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/uuid"
 	"k8s.io/kubernetes/pkg/util/wait"
 	"k8s.io/kubernetes/pkg/watch"
 
@@ -44,7 +43,6 @@ type AnalyticsController struct {
 	namespaceStore          cache.Store
 	userStore               cache.Store
 	startTime               int64
-	metricsServerPort       int
 	metricsPollingFrequency int
 	eventsHandled           int
 	metrics                 *Stack
@@ -56,18 +54,11 @@ type AnalyticsController struct {
 	userKeyAnnotation       string
 }
 
-type metricsSnapshot struct {
-	Timestamp          int64
-	CurrentQueueLength int
-	EventsHandled      int
-}
-
 type AnalyticsControllerConfig struct {
 	Destinations            map[string]Destination
 	KubeClient              kclient.Interface
 	OSClient                osclient.Interface
 	MaximumQueueLength      int
-	MetricsServerPort       int
 	MetricsPollingFrequency int
 	ClusterName             string
 	UserKeyStrategy         string
@@ -84,17 +75,17 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		client:                  config.OSClient,
 		kclient:                 config.KubeClient,
 		maximumQueueLength:      config.MaximumQueueLength,
-		metricsServerPort:       config.MetricsServerPort,
 		metricsPollingFrequency: config.MetricsPollingFrequency,
 		metrics:                 NewStack(10),
 		mutex:                   &sync.Mutex{},
 		namespaceStore:          cache.NewStore(cache.MetaNamespaceKeyFunc),
 		userStore:               cache.NewStore(cache.MetaNamespaceKeyFunc),
-		controllerID:            string(util.NewUUID()),
+		controllerID:            string(uuid.NewUUID()),
 		clusterName:             config.ClusterName,
 		userKeyStrategy:         config.UserKeyStrategy,
 		userKeyAnnotation:       config.UserKeyAnnotation,
 	}
+
 	return ctrl, nil
 }
 
@@ -128,10 +119,8 @@ func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 	// this function only needs to be called once.
 	c.runWatches()
 
-	// this go routine collects metrics in the background
-	go wait.Until(c.gatherMetrics, time.Duration(c.metricsPollingFrequency)*time.Second, c.stopChannel)
-	// this go routine serves metrics for consumption
-	go wait.Until(c.serveMetrics, 1*time.Second, c.stopChannel)
+	http.HandleFunc("/healthz", HealthHandler)
+	http.HandleFunc("/healthz/ready", HealthHandler)
 }
 
 // runWatches will attempt to run all watches in separate goroutines w/ the same stop channel.  Each has its own
@@ -233,38 +222,6 @@ func (c *AnalyticsController) runProjectWatch() {
 		},
 	}
 	cache.NewReflector(userLW, &userapi.User{}, c.userStore, 10*time.Minute).Run()
-}
-
-func (c *AnalyticsController) gatherMetrics() {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	metric := &metricsSnapshot{
-		Timestamp:          time.Now().Unix(),
-		CurrentQueueLength: len(c.queue.ListKeys()),
-		EventsHandled:      c.eventsHandled,
-	}
-	glog.Infof("Pushing metric: %#v", metric)
-	c.metrics.Push(metric)
-}
-
-func (c *AnalyticsController) serveMetrics() {
-	http.HandleFunc("/metrics", c.metricsHandler)
-	strPort := fmt.Sprintf(":%d", c.metricsServerPort)
-	glog.Infof("Starting metrics server on port %s", strPort)
-	if err := http.ListenAndServe(strPort, nil); err != nil {
-		glog.Fatal("Could not start server")
-	}
-}
-
-func (c *AnalyticsController) metricsHandler(w http.ResponseWriter, r *http.Request) {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-	b, err := json.Marshal(c.metrics.AsList())
-	if err != nil {
-		fmt.Printf("Error: %s", err)
-		return
-	}
-	fmt.Fprint(w, string(b))
 }
 
 func (c *AnalyticsController) processAnalyticFromQueue(obj interface{}) error {
