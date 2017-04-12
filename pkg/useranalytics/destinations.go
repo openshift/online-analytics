@@ -40,6 +40,7 @@ func (d *WoopraDestination) send(params map[string]string) error {
 		urlParams.Add(key, value)
 	}
 	encodedParams := urlParams.Encode()
+	glog.V(6).Infof("Sending request to WoopraDestination: %+v", d)
 	if d.Method == "GET" {
 		endpoint := d.Endpoint
 		if strings.Index(endpoint, "?%s") != (len(endpoint) - 3) {
@@ -51,13 +52,14 @@ func (d *WoopraDestination) send(params map[string]string) error {
 		if err != nil {
 			return err
 		}
+		glog.V(6).Infof("Response from GET request to %s: %s", encodedUrl, resp.Body)
 		_, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
 			return fmt.Errorf("error forwarding analytic: %v", err)
 		}
 
 	} else if d.Method == "POST" {
-		return fmt.Errorf("not implemented yet")
+		return fmt.Errorf("POST not implemented yet")
 	} else {
 		return fmt.Errorf("Unknown HTTP method, was not GET or POST")
 	}
@@ -120,14 +122,19 @@ type realHttpClient struct {
 var _ SimpleHttpClient = &realHttpClient{}
 
 func (h *realHttpClient) Get(endpoint string) (*http.Response, error) {
+	glog.V(6).Infof("Creating new GET request")
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %v", err)
 	}
+
+	glog.V(6).Infof("Sending GET request: %+v", req)
 	resp, e := h.httpClient.Do(req)
 	if e != nil {
 		return nil, e
 	}
+
+	glog.V(6).Infof("GET request response: %s", resp.Body)
 	_, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error forwarding analytic: %v", err)
@@ -136,7 +143,7 @@ func (h *realHttpClient) Get(endpoint string) (*http.Response, error) {
 }
 
 func (h *realHttpClient) Post(endpoint string, bodyType string, body io.Reader) (resp *http.Response, err error) {
-	return nil, fmt.Errorf("not implemented yet")
+	return nil, fmt.Errorf("POST not implemented yet")
 }
 
 func prepEndpoint(endpoint string) string {

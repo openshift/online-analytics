@@ -104,6 +104,7 @@ func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 	c.stopChannel = stopCh
 	c.startTime = time.Now().UnixNano()
 
+	glog.V(6).Infof("Controller start time: %v", c.startTime)
 	// the workers that forward analytic events to destinations
 	for i := 0; i < workers; i++ {
 		go wait.Until(c.worker, time.Second, c.stopChannel)
@@ -145,6 +146,7 @@ func (c *AnalyticsController) runWatches() {
 				glog.Errorf("error creating watch %s: %v", n, err)
 			}
 
+			glog.V(6).Infof("Backing off %s watch for %v seconds", n, backoff)
 			time.Sleep(backoff)
 			backoff = backoff * 2
 			if backoff > 60*time.Second {
@@ -152,7 +154,7 @@ func (c *AnalyticsController) runWatches() {
 			}
 
 			if w == nil {
-				glog.Errorf("watch not created for %s, returning", n)
+				glog.Errorf("watch function nil, watch not created for %s, returning", n)
 				return
 			}
 
@@ -165,7 +167,7 @@ func (c *AnalyticsController) runWatches() {
 					}
 
 					if event.Type == watch.Error {
-						glog.Errorf("Watch channel returned error: %s", spew.Sdump(event))
+						glog.Errorf("Watch channel for %s returned error: %s", n, spew.Sdump(event))
 						return
 					}
 
@@ -176,7 +178,7 @@ func (c *AnalyticsController) runWatches() {
 					if event.Type == watch.Added || event.Type == watch.Deleted {
 						m, err := meta.Accessor(event.Object)
 						if err != nil {
-							glog.Errorf("Unable to create object meta for %v", event.Object)
+							glog.Errorf("Unable to create object meta for %v in %s watch", event.Object, n)
 							return
 						}
 						// each watch is a separate go routine
@@ -186,13 +188,13 @@ func (c *AnalyticsController) runWatches() {
 
 						analytic, err := newEvent(event.Object, event.Type)
 						if err != nil {
-							glog.Errorf("Unexpected error creation analytic from watch event %#v", event.Object)
+							glog.Errorf("Unexpected error creation analytic in %s watch from watch event %#v", n, event.Object)
 						} else {
 							// additional info will be set to the analytic and
 							// an instance queued for all destinations
 							err := c.AddEvent(analytic)
 							if err != nil {
-								glog.Errorf("Error adding event: %v - %v", err, analytic)
+								glog.Errorf("Error in %s watch adding event: %v - %v", n, err, analytic)
 							}
 						}
 					}
@@ -225,6 +227,7 @@ func (c *AnalyticsController) runProjectWatch() {
 }
 
 func (c *AnalyticsController) processAnalyticFromQueue(obj interface{}) error {
+	glog.V(6).Infof("Processing analytics event from queue: %v", obj)
 	e, ok := obj.(*analyticsEvent)
 	if !ok {
 		return fmt.Errorf("Expected analyticEvent object but got %v", obj)
@@ -234,6 +237,7 @@ func (c *AnalyticsController) processAnalyticFromQueue(obj interface{}) error {
 		return fmt.Errorf("No destination specified. Ignoring analytic: %v", e)
 	}
 
+	glog.V(6).Infof("Attempting to send analytic event to destination %s", e.destination)
 	dest, ok := c.destinations[e.destination]
 	if !ok {
 		return fmt.Errorf("Destination %s not found", e.destination)
@@ -265,6 +269,7 @@ func (c *AnalyticsController) worker() {
 // The namespace owner is automatically assigned as the event owner.
 // Events w/ timestamps earlier than the start of this controller are not processed.
 func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
+	glog.V(6).Infof("Adding analyticEvent to queue: %v", ev)
 	if len(c.queue.ListKeys()) > c.maximumQueueLength {
 		return fmt.Errorf("analyticEvent reject, exceeds maximum queue length: %d - %#v", c.maximumQueueLength, ev)
 	}
@@ -360,6 +365,8 @@ func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDErro
 			noIDFoundError,
 		}
 	}
+
+	glog.V(6).Infof("Getting userId with strategy %s", c.userKeyStrategy)
 	user := userObj.(*userapi.User)
 	switch c.userKeyStrategy {
 	case KeyStrategyAnnotation:

@@ -10,6 +10,8 @@ import (
 	meta "k8s.io/kubernetes/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/watch"
+
+	"github.com/golang/glog"
 )
 
 type analyticsEvent struct {
@@ -38,6 +40,7 @@ type analyticsEvent struct {
 }
 
 func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyticsEvent, error) {
+	glog.V(6).Infof("Creating new event type %s from runtime: %+v", eventType, obj)
 	m, err := meta.Accessor(obj)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create object meta for %v", obj)
@@ -56,6 +59,7 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 		timestamp:       time.Now(),
 	}
 
+	glog.V(6).Infof("Created analyticEvent %+v", analyticEvent)
 	// TODO: this is deprecated. Replace with meta.Accessor after rebase.
 	om, err := api.ObjectMetaFor(obj)
 	if err != nil {
