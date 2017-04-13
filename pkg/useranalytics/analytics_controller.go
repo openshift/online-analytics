@@ -2,6 +2,7 @@ package useranalytics
 
 import (
 	"fmt"
+	"math/big"
 	"net/http"
 	"sync"
 	"time"
@@ -126,6 +127,8 @@ func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
 // runWatches will attempt to run all watches in separate goroutines w/ the same stop channel.  Each has its own
 // ability to restart the watch if the inner func doing the work fails for any reason.
 func (c *AnalyticsController) runWatches() {
+	lastResourceVersion := big.NewInt(0)
+	currentResourceVersion := big.NewInt(0)
 	watchListItems := WatchFuncList(c.kclient, c.client)
 	for name := range watchListItems {
 
@@ -133,14 +136,13 @@ func (c *AnalyticsController) runWatches() {
 		// goroutine gets the correct watch function required
 		wfnc := watchListItems[name]
 		n := name
-		kind := wfnc.objType.GetObjectKind().GroupVersionKind().Kind
 		backoff := 1 * time.Second
 
 		go wait.Until(func() {
 			// any return from this func only exits that invocation of the func.
 			// wait.Until will call it again after its sync period.
-			glog.V(3).Infof("Starting watch for %s with resourceVersion %s", n, c.watchResourceVersions[kind])
-			w, err := wfnc.watchFunc(api.ListOptions{ResourceVersion: c.watchResourceVersions[kind]})
+			glog.V(3).Infof("Starting watch for %s", n)
+			w, err := wfnc.watchFunc(api.ListOptions{})
 			if err != nil {
 				glog.Errorf("error creating watch %s: %v", n, err)
 			}
@@ -174,14 +176,28 @@ func (c *AnalyticsController) runWatches() {
 					backoff = 1 * time.Second
 
 					if event.Type == watch.Added || event.Type == watch.Deleted {
-						m, err := meta.Accessor(event.Object)
 						if err != nil {
 							glog.Errorf("Unable to create object meta for %v", event.Object)
 							return
 						}
+
+						m, err := meta.Accessor(event.Object)
+						// if both resource versions can be converted to numbers
+						// and if the current resource version is lower than the
+						// last recorded resource version for this resource type
+						// then skip the event
+						if _, ok := lastResourceVersion.SetString(c.watchResourceVersions[n], 10); ok {
+							if _, ok = currentResourceVersion.SetString(m.GetResourceVersion(), 10); ok {
+								if lastResourceVersion.Cmp(currentResourceVersion) == 1 {
+									glog.V(5).Infof("ResourceVersion %v is to old for %v (%v)", currentResourceVersion, n, c.watchResourceVersions[n])
+									break
+								}
+							}
+						}
+
 						// each watch is a separate go routine
 						c.mutex.Lock()
-						c.watchResourceVersions[kind] = m.GetResourceVersion()
+						c.watchResourceVersions[n] = m.GetResourceVersion()
 						c.mutex.Unlock()
 
 						analytic, err := newEvent(event.Object, event.Type)
