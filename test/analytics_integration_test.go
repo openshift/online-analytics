@@ -68,7 +68,6 @@ func TestProvisioner(t *testing.T) {
 		KubeClient:              kubeClient,
 		OSClient:                openshiftClient,
 		MaximumQueueLength:      10000,
-		MetricsServerPort:       9999,
 		MetricsPollingFrequency: 5,
 	}
 
