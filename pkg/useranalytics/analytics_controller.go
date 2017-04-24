@@ -299,12 +299,12 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 		userId, err := c.getUserId(ev)
 		if err != nil {
 			switch err.reason {
-			case missingProjectError:
-			case requesterAnnotationNotFoundError:
+			case missingProjectError, requesterAnnotationNotFoundError:
 				glog.V(3).Infoln(err.message)
-			case userNotFoundError:
-			case noIDFoundError:
+			case userNotFoundError, noIDFoundError:
 				glog.V(5).Infoln(err.message)
+			default:
+				glog.V(5).Infof("Unexpected error reason '%v' getting user id: %v", err.reason, err.message)
 			}
 			return nil
 		}
