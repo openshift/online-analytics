@@ -317,6 +317,7 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 			objectNamespace: ev.objectNamespace,
 			objectUID:       ev.objectUID,
 			properties:      make(map[string]string),
+			annotations:     make(map[string]string),
 			timestamp:       ev.timestamp,
 			destination:     destName,
 			clusterName:     c.clusterName,
@@ -324,6 +325,9 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 		}
 		for key, value := range ev.properties {
 			e.properties[key] = value
+		}
+		for key, value := range ev.annotations {
+			e.annotations[key] = value
 		}
 
 		c.queue.Add(e)
@@ -433,6 +437,17 @@ func (c *AnalyticsController) getUsernameFromNamespace(ev *analyticsEvent) (stri
 	if namespaceName == "" {
 		// namespace has no namespace, but its name *is* the namespace
 		namespaceName = ev.objectName
+	}
+
+	if ev.objectKind == "namespace" {
+		username, exists := ev.annotations[projectapi.ProjectRequester]
+		if !exists {
+			return "", &userIDError{
+				fmt.Sprintf("ProjectRequest annotation does not exist on project %s", namespaceName),
+				requesterAnnotationNotFoundError,
+			}
+		}
+		return username, nil
 	}
 
 	obj, exists, err := c.namespaceStore.GetByKey(namespaceName)

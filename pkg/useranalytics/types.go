@@ -29,6 +29,7 @@ type analyticsEvent struct {
 	controllerID string
 	clusterName  string
 	properties   map[string]string
+	annotations  map[string]string
 	// timestamp of event occurrence
 	timestamp time.Time
 	// the name of the dest to send this event to
@@ -56,7 +57,11 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 		objectNamespace: m.GetNamespace(),
 		objectUID:       string(m.GetUID()),
 		properties:      make(map[string]string),
+		annotations:     make(map[string]string),
 		timestamp:       time.Now(),
+	}
+	for key, value := range m.GetAnnotations() {
+		analyticEvent.annotations[key] = value
 	}
 
 	glog.V(6).Infof("Created analyticEvent %+v", analyticEvent)
