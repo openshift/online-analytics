@@ -8,8 +8,6 @@ import (
 	"net/url"
 	"strings"
 
-	intercom "gopkg.in/intercom/intercom-go.v2"
-
 	"github.com/golang/glog"
 )
 
@@ -21,17 +19,12 @@ type Destination interface {
 }
 
 var _ Destination = &WoopraDestination{}
-var _ Destination = &IntercomDestination{}
 
 type WoopraDestination struct {
 	Method   string
 	Endpoint string
 	Domain   string
 	Client   SimpleHttpClient
-}
-
-type IntercomDestination struct {
-	Client IntercomEventClient
 }
 
 func (d *WoopraDestination) send(params map[string]string) error {
@@ -90,20 +83,6 @@ func (d *WoopraDestination) Send(ev *analyticsEvent) error {
 	return d.send(params)
 }
 
-func (d *IntercomDestination) Send(ev *analyticsEvent) error {
-	iev := &intercom.Event{
-		Email:     ev.objectNamespace,
-		UserID:    ev.userID,
-		EventName: ev.event,
-		CreatedAt: ev.timestamp.Unix(),
-		Metadata: map[string]interface{}{
-			"cv_project_namespace": ev.objectNamespace,
-		},
-	}
-	glog.V(6).Infof("Intercom event %#v", iev)
-	return d.Client.Save(iev)
-}
-
 // SimpleHttpClient is a tiny HTTP interface that allows easy mock testing
 type SimpleHttpClient interface {
 	Get(endpoint string) (resp *http.Response, err error)
@@ -152,20 +131,4 @@ func prepEndpoint(endpoint string) string {
 	}
 
 	return endpoint
-}
-
-type IntercomEventClient interface {
-	Save(ev *intercom.Event) error
-}
-
-func NewIntercomEventClient(client *intercom.Client) IntercomEventClient {
-	return &realIntercomEventClient{client}
-}
-
-type realIntercomEventClient struct {
-	Client *intercom.Client
-}
-
-func (c *realIntercomEventClient) Save(ev *intercom.Event) error {
-	return c.Client.Events.Save(ev)
 }

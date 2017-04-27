@@ -9,8 +9,6 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/util/rand"
 	"k8s.io/kubernetes/pkg/util/wait"
-
-	intercom "gopkg.in/intercom/intercom-go.v2"
 )
 
 var _ Destination = &mockDestination{}
@@ -46,26 +44,17 @@ type mockResponse struct {
 }
 
 func (r *mockResponse) Read(p []byte) (n int, err error) {
-	for i, _ := range p {
+	for i := range p {
 		p[i] = 1
 	}
 	return 1, io.EOF
 }
 
 func (r *mockResponse) Write(p []byte) (n int, err error) {
-	for i, _ := range p {
+	for i := range p {
 		p[i] = 2
 	}
 	return 1, io.EOF
-}
-
-type mockIntercomEventClient struct {
-	event *intercom.Event
-}
-
-func (m *mockIntercomEventClient) Save(ev *intercom.Event) error {
-	m.event = ev
-	return nil
 }
 
 type MockHttpEndpoint struct {

@@ -2,12 +2,8 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/openshift/online/user-analytics/pkg/useranalytics"
 
@@ -18,7 +14,6 @@ import (
 
 	glog "github.com/golang/glog"
 	"github.com/spf13/pflag"
-	intercom "gopkg.in/intercom/intercom-go.v2"
 )
 
 func main() {
@@ -26,8 +21,7 @@ func main() {
 	var clusterName string
 	var maximumQueueLength, metricsPollingFrequency int
 	var woopraEndpoint, woopraDomain string
-	var intercomUsernameFile, intercomPasswordFile string
-	var woopraEnabled, intercomEnabled, localEndpointEnabled bool
+	var woopraEnabled, localEndpointEnabled bool
 	var userKeyStrategy, userKeyAnnotation string
 	var metricsBindAddr string
 	var collectRuntime, collectWoopra, collectQueue bool
@@ -42,10 +36,6 @@ func main() {
 	flag.StringVar(&woopraEndpoint, "woopraEndpoint", "http://www.example.com", "The URL to send data to")
 	flag.StringVar(&woopraDomain, "woopraDomain", "openshift", "The domain to collect data under")
 	flag.BoolVar(&woopraEnabled, "woopraEnabled", true, "Enable/disable sending data to Woopra")
-
-	flag.BoolVar(&intercomEnabled, "intercomEnabled", true, "Enable/disable sending data to Intercom")
-	flag.StringVar(&intercomUsernameFile, "intercomUsernameFile", "", "The filepath to the Secret containing the username.")
-	flag.StringVar(&intercomPasswordFile, "intercomPasswordFile", "", "The filepath to the Secret containing the password.")
 
 	flag.StringVar(&userKeyStrategy, "userKeyStrategy", useranalytics.KeyStrategyUID, "Strategy used to key users in Woopra. Options are [annotation|name|uid]")
 	flag.StringVar(&userKeyAnnotation, "userKeyAnnotation", useranalytics.OnlineManagedID, "User annotation to use if userKeyStrategy=annotation")
@@ -119,24 +109,6 @@ func main() {
 		}
 	}
 
-	if intercomEnabled {
-		appId, appKey, err := getIntercomCredentials(intercomUsernameFile, intercomPasswordFile)
-
-		// TODO: figure out where this newline is coming from.
-		// It breaks auth in the Intercom client.
-		if strings.HasSuffix(appId, "\n") {
-			appId = strings.Replace(appId, "\n", "", -1)
-			appKey = strings.Replace(appKey, "\n", "", -1)
-		}
-
-		if err != nil {
-			glog.Fatal("Error getting Intercom credentials: %v", err)
-		}
-		config.Destinations["intercom"] = &useranalytics.IntercomDestination{
-			Client: useranalytics.NewIntercomEventClient(intercom.NewClient(appId, appKey)),
-		}
-	}
-
 	if localEndpointEnabled {
 		config.Destinations["local"] = &useranalytics.WoopraDestination{
 			Method:   "GET",
@@ -194,31 +166,6 @@ func main() {
 	controller.Run(c, 3)
 	<-c
 
-}
-
-func getFromFlagOrFile(value string, file string) string {
-	if len(value) > 0 {
-		return value
-	}
-	path, _ := filepath.Abs(file)
-	bytes, err := ioutil.ReadFile(path)
-	if err != nil {
-		fmt.Printf("error reading file %q: %v", file, err)
-		os.Exit(4)
-	}
-	return strings.TrimSpace(string(bytes))
-}
-
-func getIntercomCredentials(intercomUsernameFile, intercomPasswordFile string) (string, string, error) {
-	username := getFromFlagOrFile("", intercomUsernameFile)
-	password := getFromFlagOrFile("", intercomPasswordFile)
-	if username == "" {
-		return "", "", fmt.Errorf("Could not find INTERCOM_USERNAME at path %s", intercomUsernameFile)
-	}
-	if password == "" {
-		return "", "", fmt.Errorf("Could not find INTERCOM_PASSWORD at path %s", intercomPasswordFile)
-	}
-	return username, password, nil
 }
 
 func validateKeyStrategy(strategy string) bool {
