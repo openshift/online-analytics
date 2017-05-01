@@ -11,38 +11,6 @@ import (
 	"k8s.io/kubernetes/pkg/watch"
 )
 
-func TestIntercomDestination(t *testing.T) {
-	pod := &api.Pod{
-		ObjectMeta: api.ObjectMeta{
-			Name:      "foo",
-			Namespace: "bar",
-		},
-	}
-
-	// TODO:  this needs some kind of factory per object
-	// that creates analyticsEvent objects
-	event, _ := newEvent(pod, watch.Added)
-
-	dest := &IntercomDestination{
-		Client: &mockIntercomEventClient{},
-	}
-
-	err := dest.Send(event)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
-
-	mockClient := dest.Client.(*mockIntercomEventClient)
-
-	if mockClient.event == nil {
-		t.Error("Expected non-nil event")
-	}
-
-	if mockClient.event.Email != pod.Namespace {
-		t.Errorf("Expected %s, but got %s", pod.Namespace, mockClient.event.Email)
-	}
-}
-
 func TestWoopraDestination(t *testing.T) {
 	pod := &api.Pod{
 		ObjectMeta: api.ObjectMeta{

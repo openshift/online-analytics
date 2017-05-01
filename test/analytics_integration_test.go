@@ -12,7 +12,7 @@ import (
 	testutil "github.com/openshift/origin/test/util"
 	testserver "github.com/openshift/origin/test/util/server"
 	kclient "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/uuid"
 
 	api "k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/resource"
@@ -69,6 +69,7 @@ func TestProvisioner(t *testing.T) {
 		OSClient:                openshiftClient,
 		MaximumQueueLength:      10000,
 		MetricsPollingFrequency: 5,
+		UserKeyStrategy:         "uid",
 	}
 
 	config.Destinations["mock"] = &useranalytics.WoopraDestination{
@@ -122,7 +123,7 @@ func generateUserAndNamespace(harness *testHarness) {
 		ObjectMeta: api.ObjectMeta{
 			Name: "foo-user",
 			Annotations: map[string]string{
-				OnlineManagedID: string(util.NewUUID()),
+				useranalytics.OnlineManagedID: string(uuid.NewUUID()),
 			},
 		},
 	})
