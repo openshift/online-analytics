@@ -164,7 +164,7 @@ func (c *AnalyticsController) runWatches() {
 				select {
 				case event, ok := <-w.ResultChan():
 					if !ok {
-						glog.Errorf("Error received from %s watch channel", n)
+						glog.V(3).Infof("%s watch channel closed unexpectedly, attempting to re-establish watch", n)
 						return
 					}
 
