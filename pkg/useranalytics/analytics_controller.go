@@ -352,10 +352,11 @@ const (
 	noIDFoundError                   = "NoIDFoundError"
 )
 
-// getUserId returns a unique identifier to associate analytics with. It wants to return, in order:
-// 1. user.Annotations[OnlineManagedID], which is the Intercom ID in the Online environment
-// 2. a default ID associated with the specific destination on the analytic event. Used for testing external endpoints.
-// 3. user.UID for non-Online environment that want analytics (e.g, Dedicated).
+// getUserId returns a unique identifier to associate analytics with.
+// It will return the identifier based on the UserKeyStrategy and (optionally) UserKeyAnnotation flags:
+//   1. UserKeyStrategy="name" will return user.Name
+//   2. UserKeyStrategy="uid" will return user.UID
+//   3. UserKeyStrategy="annotation" will return a user.Annotations[] value, with the key specified by UserKeyAnnotation
 // If an ID cannot be found for any reason, an empty string and error is returned
 func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDError) {
 	var username string
