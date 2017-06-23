@@ -361,7 +361,7 @@ const (
 func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDError) {
 	username, e := c.getUsernameFromNamespace(ev)
 	if e != nil {
-		return "", err
+		return "", e
 	}
 
 	userObj, exists, err := c.userStore.GetByKey(username)
