@@ -359,17 +359,9 @@ const (
 //   3. UserKeyStrategy="annotation" will return a user.Annotations[] value, with the key specified by UserKeyAnnotation
 // If an ID cannot be found for any reason, an empty string and error is returned
 func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDError) {
-	var username string
-
-	// If it's a user_added event, there may not be a namespace to trigger the event, but we have the username anyway
-	if ev.objectKind == "user" {
-		username = ev.objectName
-	} else {
-		name, err := c.getUsernameFromNamespace(ev)
-		if err != nil {
-			return "", err
-		}
-		username = name
+	username, e := c.getUsernameFromNamespace(ev)
+	if e != nil {
+		return "", err
 	}
 
 	userObj, exists, err := c.userStore.GetByKey(username)

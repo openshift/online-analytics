@@ -12,7 +12,6 @@ import (
 	imageapi "github.com/openshift/origin/pkg/image/api"
 	routeapi "github.com/openshift/origin/pkg/route/api"
 	templateapi "github.com/openshift/origin/pkg/template/api"
-	userapi "github.com/openshift/origin/pkg/user/api"
 )
 
 type watchListItem struct {
@@ -94,13 +93,6 @@ func WatchFuncList(kubeClient kclient.Interface, osClient osclient.Interface) ma
 			objType: &imageapi.ImageStream{},
 			watchFunc: func(options api.ListOptions) (watch.Interface, error) {
 				return osClient.ImageStreams(api.NamespaceAll).Watch(options)
-			},
-			isOS: true,
-		},
-		"users": {
-			objType: &userapi.User{},
-			watchFunc: func(options api.ListOptions) (watch.Interface, error) {
-				return osClient.Users().Watch(options)
 			},
 			isOS: true,
 		},
