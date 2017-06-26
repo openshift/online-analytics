@@ -47,7 +47,7 @@ type AnalyticsController struct {
 	metricsPollingFrequency int
 	eventsHandled           int
 	metrics                 *Stack
-	mutex                   *sync.Mutex
+	mutex                   *sync.RWMutex
 	stopChannel             <-chan struct{}
 	controllerID            string
 	clusterName             string
@@ -78,7 +78,7 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		maximumQueueLength:      config.MaximumQueueLength,
 		metricsPollingFrequency: config.MetricsPollingFrequency,
 		metrics:                 NewStack(10),
-		mutex:                   &sync.Mutex{},
+		mutex:                   &sync.RWMutex{},
 		namespaceStore:          cache.NewStore(cache.MetaNamespaceKeyFunc),
 		userStore:               cache.NewStore(cache.MetaNamespaceKeyFunc),
 		controllerID:            string(uuid.NewUUID()),
@@ -188,14 +188,17 @@ func (c *AnalyticsController) runWatches() {
 						// and if the current resource version is lower than the
 						// last recorded resource version for this resource type
 						// then skip the event
+						c.mutex.RLock()
 						if _, ok := lastResourceVersion.SetString(c.watchResourceVersions[n], 10); ok {
 							if _, ok = currentResourceVersion.SetString(m.GetResourceVersion(), 10); ok {
 								if lastResourceVersion.Cmp(currentResourceVersion) == 1 {
 									glog.V(5).Infof("ResourceVersion %v is to old for %v (%v)", currentResourceVersion, n, c.watchResourceVersions[n])
+									c.mutex.RUnlock()
 									break
 								}
 							}
 						}
+						c.mutex.RUnlock()
 
 						// each watch is a separate go routine
 						c.mutex.Lock()
