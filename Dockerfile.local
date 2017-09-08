@@ -1,8 +1,0 @@
-# TODO: make this the default 'Dockerfile' when switch to docker-build/s2i deployment
-FROM golang:1.7
-
-ADD . /go/src/github.com/openshift/online-analytics
-
-WORKDIR /go/src/github.com/openshift/online-analytics
-RUN make build TARGET=dev
-ENTRYPOINT ["user-analytics"]

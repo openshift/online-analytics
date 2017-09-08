@@ -2,13 +2,8 @@
 
 .DEFAULT_GOAL := help
 
-TAG ?= openshift/online-user-analytics
-TARGET ?= prod
-
+TAG ?= openshift/online-analytics
 DOCKERFILE := Dockerfile
-ifeq ($(TARGET),dev)
-DOCKERFILE := Dockerfile.local
-endif
 
 # Builds and installs the user-analytics binary.
 build: check-gopath
@@ -54,10 +49,10 @@ test-integration: test-prepare
 #
 # Args:
 #   TAG: Docker image tag to apply to the built image. If not specified, the
-#     default tag "openshift/online-user-analytics" will be used.
+#     default tag "openshift/online-analytics" will be used.
 #
 # Example:
-#   make release TAG="my/online-user-analytics"
+#   make release TAG="my/online-analytics"
 release:
 	docker build --rm -f $(DOCKERFILE) -t $(TAG) .
 .PHONY: release
@@ -71,7 +66,7 @@ release:
 # Examples:
 #
 #   make test-release
-#   make test-release TAG="my/online-user-analytics"
+#   make test-release TAG="my/online-analytics"
 test-release:
 	docker run --rm -ti \
 		$(DOCKERFLAGS) \
