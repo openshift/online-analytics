@@ -1,0 +1,46 @@
+---
+- name: Check for required vars
+  fail:
+    msg: "Please specify a value for {{ item }}"
+  when: item is undefined
+  with_items:
+  - osoan_cluster_name
+  - osoan_woopra_enabled
+  - osoan_woopra_domain
+
+- include: uninstall.yml
+  when: osoan_uninstall | bool
+
+- debug: msg="Deploying {{ osoan_name}} from {{ osoan_git_repo }} ref {{osoan_git_ref }}"
+
+- name: copy application template
+  copy:
+    src: analytics-template.yaml
+    dest: "{{ osoan_template_path }}"
+    #  register: copy_template_out
+
+- name: create template
+  oc_obj:
+    state: present
+    namespace: "{{ osoan_namespace }}"
+    name: user-analytics
+    kind: template
+    files:
+    - "{{ osoan_template_path }}"
+
+- name: Create the analytics app using the analytics template
+  oc_process:
+    namespace: "{{ osoan_namespace }}"
+    template_name: user-analytics
+    create: True
+    reconcile: True
+    params:
+      GIT_REPO: "{{ osoan_git_repo }}"
+      GIT_REF: "{{ osoan_git_ref }}"
+      WOOPRA_ENABLED: "{{ osoan_woopra_enabled }}"
+      WOOPRA_ENDPOINT: "{{ osoan_woopra_endpoint }}"
+      WOOPRA_DOMAIN: "{{ osoan_woopra_domain }}"
+      LOCAL_ENDPOINT_ENABLED: "{{ osoan_local_endpoint_enabled }}"
+      USER_KEY_STRATEGY: "{{ osoan_user_key_strategy }}"
+      CLUSTER_NAME: "{{ osoan_cluster_name }}"
+      LOG_LEVEL: "{{ osoan_log_level }}"

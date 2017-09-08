@@ -1,0 +1,3 @@
+ansible/roles/lib_openshift
+ansible.log
+ansible/.gogitit-cache.yml

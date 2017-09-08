@@ -1,0 +1,12 @@
+# By default we use a mock local endpoint instead of connecting to Woopra:
+online_analytics_woopra_enabled: false
+online_analytics_local_endpoint_enabled: true
+online_analytics_log_level: 5
+
+# Uncomment to enable and use Woopra:
+#online_analytics_woopra_enabled: true
+#online_analytics_local_endpoint_enabled: false
+#online_analytics_log_level: 5
+
+osoan_cluster_name: devenv
+osoan_woopra_domain: test.openshift.com
