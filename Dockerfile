@@ -13,7 +13,7 @@ LABEL com.redhat.component="oso-user-analytics-docker" \
       version="v3.3.0.0" \
       architecture="x86_64"
 
-ADD . /go/src/github.com/openshift/online/user-analytics
+ADD . /go/src/github.com/openshift/online-analytics
 
 RUN yum-config-manager --enable rhel-7-server-optional-rpms && \
     INSTALL_PKGS="golang make" && \
@@ -21,6 +21,6 @@ RUN yum-config-manager --enable rhel-7-server-optional-rpms && \
     rpm -V $INSTALL_PKGS && \
     yum clean all -y
 
-WORKDIR /go/src/github.com/openshift/online/user-analytics
+WORKDIR /go/src/github.com/openshift/online-analytics
 RUN make build TARGET=prod
 ENTRYPOINT ["user-analytics"]

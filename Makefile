@@ -13,7 +13,7 @@ endif
 # Builds and installs the user-analytics binary.
 build: check-gopath
 	go install \
-		github.com/openshift/online/user-analytics/cmd/user-analytics
+		github.com/openshift/online-analytics/cmd/user-analytics
 .PHONY: build
 
 
@@ -26,13 +26,13 @@ build: check-gopath
 #   make test TESTFLAGS="-run TestSomething"
 test: build
 	go test -v $(TESTFLAGS) \
-		github.com/openshift/online/user-analytics/pkg/...
+		github.com/openshift/online-analytics/pkg/...
 .PHONY: test
 
 
 # Precompile everything required for development/test.
 test-prepare: build
-	go test -i github.com/openshift/online/user-analytics/test/...
+	go test -i github.com/openshift/online-analytics/test/...
 .PHONY: test-prepare
 
 
@@ -46,7 +46,7 @@ test-prepare: build
 #   make test-integration TESTFLAGS="-run TestIntegration/SubscriptionUpgrade"
 test-integration: test-prepare
 	go test -v -timeout 1h $(TESTFLAGS) \
-		github.com/openshift/online/user-analytics/test/...
+		github.com/openshift/online-analytics/test/...
 .PHONY: test-integration
 
 
@@ -83,11 +83,11 @@ test-release:
 
 # Verifies that source passes standard checks.
 verify:
-	$(GOPATH)/src/github.com/openshift/online/hack/verify-source.sh
+	$(GOPATH)/src/github.com/openshift/online-analytics/hack/verify-source.sh
 	go vet \
-		github.com/openshift/online/user-analytics/cmd/... \
-		github.com/openshift/online/user-analytics/pkg/... \
-		github.com/openshift/online/user-analytics/test/...
+		github.com/openshift/online-analytics/cmd/... \
+		github.com/openshift/online-analytics/pkg/... \
+		github.com/openshift/online-analytics/test/...
 .PHONY: verify
 
 

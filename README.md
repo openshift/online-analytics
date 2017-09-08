@@ -1,6 +1,6 @@
 # Data Analytics Integration
 
-This application syncs OpenShift user activity data with external analytics systems.  
+This application syncs OpenShift user activity data with external analytics systems.
 
 
 ## Usage
@@ -66,7 +66,7 @@ Generate analytics by logging in and creating a project w/ basic app.
 $ oc login
 Authentication required for https://10.240.0.2:8443 (openshift)
 Username: foo
-Password: 
+Password:
 Login successful.
 
 You don't have any projects. You can try to create a new project, by running
@@ -101,7 +101,7 @@ git clone https://github.com/go-inf/inf.git $GOPATH/src/speter.net/go/exp/math/d
 cd $GOPATH/src/github.com/openshift/origin
 git checkout $DESIRED_OSE_TAG
 godep restore
-cd $GOPATH/src/github.com/openshift/online/user-analytics
+cd $GOPATH/src/github.com/openshift/online-analytics
 godep restore
 ```
 
@@ -109,7 +109,7 @@ Add new dependencies to GOPATH as usual, import them in code, and when
 everything is working as you expect, run:
 
 ```bash
-cd $GOPATH/src/github.com/openshift/online/user-analytics
+cd $GOPATH/src/github.com/openshift/online-analytics
 godep save ./...
 ```
 
@@ -205,7 +205,7 @@ The following events are observed by a controller and sent to an analytics provi
 | Capacity   | ce_capacity   | obj.Spec.Capacity | The requested storage capacity   |
 | Access Modes   | ce_access_modes  | stringify(obj.Spec.AccessModes | The requested access modes for storage |
 
-### persistentvolumeclaim_bound 
+### persistentvolumeclaim_bound
 
 |           | parameter     | v3 field              | description             |
 |-----------|---------------|-----------------------|-------------------------|
