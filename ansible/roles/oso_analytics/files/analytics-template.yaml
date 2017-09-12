@@ -92,7 +92,7 @@ parameters:
   value: "1Gi"
 
 objects:
-# A role which allows volume provisioning.
+
 - apiVersion: v1
   kind: ClusterRole
   metadata:
@@ -118,11 +118,23 @@ objects:
     - get
     - list
     - watch
+  - apiGroups:
+    - ""
+    - apps.openshift.io
+    resources:
+    - deploymentconfigs
+    verbs:
+    - get
+    - list
+    - watch
+
+
 # A service account for use by the controller.
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
     name: user-analytics
+
 # A service to expose the metrics server
 - apiVersion: v1
   kind: Service
