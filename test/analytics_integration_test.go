@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openshift/online/user-analytics/pkg/useranalytics"
+	"github.com/openshift/online-analytics/pkg/useranalytics"
 
 	osclient "github.com/openshift/origin/pkg/client"
 	"github.com/openshift/origin/pkg/cmd/server/bootstrappolicy"
