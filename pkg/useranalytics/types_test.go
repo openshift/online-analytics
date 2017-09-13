@@ -3,13 +3,14 @@ package useranalytics
 import (
 	"testing"
 
-	buildapi "github.com/openshift/origin/pkg/build/api"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
-	imageapi "github.com/openshift/origin/pkg/image/api"
-	routeapi "github.com/openshift/origin/pkg/route/api"
-	templateapi "github.com/openshift/origin/pkg/template/api"
+	buildv1 "github.com/openshift/origin/pkg/build/apis/build/v1"
+	deployv1 "github.com/openshift/origin/pkg/deploy/apis/apps/v1"
+	imagev1 "github.com/openshift/origin/pkg/image/apis/image/v1"
+	routev1 "github.com/openshift/origin/pkg/route/apis/route/v1"
+	templatev1 "github.com/openshift/origin/pkg/template/apis/template/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/watch"
 )
 
 func TestHash(t *testing.T) {
@@ -23,7 +24,7 @@ func TestHash(t *testing.T) {
 		{
 			expectedMatch: false,
 			obj: &api.Pod{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -32,7 +33,7 @@ func TestHash(t *testing.T) {
 		{
 			expectedMatch: false,
 			obj: &api.Pod{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo2",
 					Namespace: "bar",
 				},
@@ -41,7 +42,7 @@ func TestHash(t *testing.T) {
 		{
 			expectedMatch: true,
 			obj: &api.Pod{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -50,7 +51,7 @@ func TestHash(t *testing.T) {
 		{
 			expectedMatch: false,
 			obj: &api.Pod{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo3",
 					Namespace: "bar",
 				},
@@ -74,7 +75,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 	}{
 		"Pod": {
 			input: &api.Pod{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -88,7 +89,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 		},
 		"ReplicationController": {
 			input: &api.ReplicationController{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -102,7 +103,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 		},
 		"PersistentVolumeClaim": {
 			input: &api.PersistentVolumeClaim{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -116,7 +117,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 		},
 		"Secret": {
 			input: &api.Secret{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -130,7 +131,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 		},
 		"Service": {
 			input: &api.Service{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -144,7 +145,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 		},
 		"Namespace": {
 			input: &api.Namespace{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -157,8 +158,8 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 		},
 		"Deployment": {
-			input: &deployapi.DeploymentConfig{
-				ObjectMeta: api.ObjectMeta{
+			input: &deployv1.DeploymentConfig{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -171,8 +172,8 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 		},
 		"Route": {
-			input: &routeapi.Route{
-				ObjectMeta: api.ObjectMeta{
+			input: &routev1.Route{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -185,8 +186,8 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 		},
 		"Build": {
-			input: &buildapi.Build{
-				ObjectMeta: api.ObjectMeta{
+			input: &buildv1.Build{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -213,8 +214,8 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 		//			},
 		//		},
 		"Template": {
-			input: &templateapi.Template{
-				ObjectMeta: api.ObjectMeta{
+			input: &templatev1.Template{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},
@@ -227,8 +228,8 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 		},
 		"ImageStream": {
-			input: &imageapi.ImageStream{
-				ObjectMeta: api.ObjectMeta{
+			input: &imagev1.ImageStream{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      "foo",
 					Namespace: "bar",
 				},

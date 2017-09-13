@@ -6,10 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"k8s.io/kubernetes/pkg/api"
-	meta "k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/watch"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
 
 	"github.com/golang/glog"
 )
@@ -66,7 +65,7 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 
 	glog.V(6).Infof("Created analyticEvent %+v", analyticEvent)
 	// TODO: this is deprecated. Replace with meta.Accessor after rebase.
-	om, err := api.ObjectMetaFor(obj)
+	accessor, err := meta.Accessor(obj)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to get ObjectMeta for %v", obj)
 	}
@@ -77,12 +76,12 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 
 	switch eventType {
 	case watch.Added:
-		analyticEvent.timestamp = om.CreationTimestamp.Time
+		analyticEvent.timestamp = accessor.GetCreationTimestamp().Time
 	case watch.Deleted:
 		// if DeletionTimestamp is nil for any reason, analyticEvent.Timestamp is still 'now'.
 		// future watch restarts won't receive another Deletion event for the same object.
-		if om.DeletionTimestamp != nil {
-			analyticEvent.timestamp = om.DeletionTimestamp.Time
+		if accessor.GetDeletionTimestamp() != nil {
+			analyticEvent.timestamp = accessor.GetDeletionTimestamp().Time
 		}
 	default:
 		return nil, fmt.Errorf("Unknown event %v", eventType)

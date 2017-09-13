@@ -5,15 +5,16 @@ import (
 	"testing"
 
 	"github.com/openshift/origin/pkg/client/testclient"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/kubernetes/pkg/api"
-	meta "k8s.io/kubernetes/pkg/api/meta"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	"k8s.io/kubernetes/pkg/watch"
+	ktestclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 )
 
 func TestWoopraDestination(t *testing.T) {
 	pod := &api.Pod{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foo",
 			Namespace: "bar",
 		},
@@ -45,7 +46,7 @@ func TestWoopraDestination(t *testing.T) {
 
 func TestWoopraLive(t *testing.T) {
 	oc := &testclient.Fake{}
-	kc := &ktestclient.Fake{}
+	kc := &ktestclient.Clientset{}
 
 	items := WatchFuncList(kc, oc)
 

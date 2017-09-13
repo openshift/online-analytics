@@ -9,8 +9,10 @@ import (
 
 	osclient "github.com/openshift/origin/pkg/client"
 	"github.com/openshift/origin/pkg/cmd/util/clientcmd"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+
+	restclient "k8s.io/client-go/rest"
+	kclientcmd "k8s.io/client-go/tools/clientcmd"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
 	glog "github.com/golang/glog"
 	"github.com/spf13/pflag"
@@ -45,42 +47,7 @@ func main() {
 	flag.BoolVar(&collectQueue, "collectQueue", true, "Enable queue metrics")
 	flag.Parse()
 
-	var kubeClient kclient.Interface
-	var openshiftClient osclient.Interface
-	if useServiceAccounts {
-		config, err := restclient.InClusterConfig()
-		if err != nil {
-			glog.V(0).Infof("Error creating cluster config: %s", err)
-			os.Exit(1)
-		}
-		oc, err := osclient.New(config)
-		if err != nil {
-			log.Printf("Error creating OpenShift client: %s", err)
-			os.Exit(2)
-		}
-		kc, err := kclient.New(config)
-		if err != nil {
-			glog.V(0).Infof("Error creating Kubernetes client: %s", err)
-			os.Exit(3)
-		}
-		openshiftClient = oc
-		kubeClient = kc
-	} else {
-		config, err := clientcmd.DefaultClientConfig(pflag.NewFlagSet("empty", pflag.ContinueOnError)).ClientConfig()
-		if err != nil {
-			log.Fatalf("Error loading config: %s", err)
-		}
-		oc, err := osclient.New(config)
-		if err != nil {
-			log.Fatalf("Error creating OpenShift client: %s", err)
-		}
-		kc, err := kclient.New(config)
-		if err != nil {
-			log.Fatalf("Error creating Kubernetes client: %s", err)
-		}
-		openshiftClient = oc
-		kubeClient = kc
-	}
+	_, _, openshiftClient, kubeClient, err := createClients()
 
 	if !validateKeyStrategy(userKeyStrategy) {
 		log.Fatalf("Must set a valid userKeyStrategy.")
@@ -166,6 +133,29 @@ func main() {
 	controller.Run(c, 3)
 	<-c
 
+}
+
+func createClients() (*restclient.Config, *clientcmd.Factory, osclient.Interface, kclientset.Interface, error) {
+	dcc := clientcmd.DefaultClientConfig(pflag.NewFlagSet("empty", pflag.ContinueOnError))
+	return CreateClientsForConfig(dcc)
+}
+
+// CreateClientsForConfig creates and returns OpenShift and Kubernetes clients (as well as other useful
+// client objects) for the given client config.
+// TODO: stop returning internalversion kclientset
+func CreateClientsForConfig(dcc kclientcmd.ClientConfig) (*restclient.Config, *clientcmd.Factory, osclient.Interface, kclientset.Interface, error) {
+
+	_, err := dcc.RawConfig()
+
+	clientFac := clientcmd.NewFactory(dcc)
+
+	clientConfig, err := dcc.ClientConfig()
+	if err != nil {
+		log.Panicf("error creating cluster clientConfig: %s", err)
+	}
+
+	oc, kc, err := clientFac.Clients()
+	return clientConfig, clientFac, oc, kc, err
 }
 
 func validateKeyStrategy(strategy string) bool {

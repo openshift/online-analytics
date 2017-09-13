@@ -11,23 +11,25 @@ import (
 	"github.com/openshift/origin/pkg/cmd/server/bootstrappolicy"
 	testutil "github.com/openshift/origin/test/util"
 	testserver "github.com/openshift/origin/test/util/server"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/util/uuid"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+
+	"k8s.io/apimachinery/pkg/api/resource"
 	api "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/resource"
 	//	buildapi "github.com/openshift/origin/pkg/build/api"
 	//	deployapi "github.com/openshift/origin/pkg/deploy/api"
 	//	imageapi "github.com/openshift/origin/pkg/image/api"
-	projectapi "github.com/openshift/origin/pkg/project/api"
+	projectapi "github.com/openshift/origin/pkg/project/apis/project"
 	//	routeapi "github.com/openshift/origin/pkg/route/api"
 	//	templateapi "github.com/openshift/origin/pkg/template/api"
-	userapi "github.com/openshift/origin/pkg/user/api"
+	userapi "github.com/openshift/origin/pkg/user/apis/user"
 	//	"github.com/golang/glog"
 )
 
 type testHarness struct {
-	kubeClient   *kclient.Client
+	kubeClient   *kclientset.Clientset
 	osClient     *osclient.Client
 	t            *testing.T
 	user         *userapi.User
@@ -41,27 +43,21 @@ func TestProvisioner(t *testing.T) {
 	flag.Set("v", "2")
 
 	testutil.RequireEtcd(t)
-	// Build master config
-	masterOptions, err := testserver.DefaultMasterOptions()
+	_, kubeConfig, err := testserver.StartTestMaster()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
 
-	// Start server
-	clusterAdminKubeConfig, err := testserver.StartConfiguredMaster(masterOptions)
+	restConfig, err := testutil.GetClusterAdminClientConfig(kubeConfig)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
 
-	openshiftClient, err := testutil.GetClusterAdminClient(clusterAdminKubeConfig)
+	openshiftClient, err := osclient.New(restConfig)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-
-	kubeClient, err := testutil.GetClusterAdminKubeClient(clusterAdminKubeConfig)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	kubeClient := kclientset.NewForConfigOrDie(restConfig)
 
 	config := &useranalytics.AnalyticsControllerConfig{
 		Destinations:            make(map[string]useranalytics.Destination),
@@ -120,7 +116,7 @@ func TestProvisioner(t *testing.T) {
 
 func generateUserAndNamespace(harness *testHarness) {
 	user, err := harness.osClient.Users().Create(&userapi.User{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "foo-user",
 			Annotations: map[string]string{
 				useranalytics.OnlineManagedID: string(uuid.NewUUID()),
@@ -132,7 +128,7 @@ func generateUserAndNamespace(harness *testHarness) {
 	}
 
 	namespace, err := harness.kubeClient.Namespaces().Create(&api.Namespace{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: testutil.Namespace(),
 			Annotations: map[string]string{
 				projectapi.ProjectRequester: user.Name,
@@ -165,7 +161,7 @@ func generateObjects(count int, harness *testHarness) {
 
 func generatePod(harness *testHarness) {
 	pod := &api.Pod{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "pod-",
 			Namespace:    testutil.Namespace(),
 		},
@@ -188,7 +184,7 @@ func generatePod(harness *testHarness) {
 
 func generatePersistentVolumeClaim(harness *testHarness) {
 	claim := &api.PersistentVolumeClaim{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "pvc-",
 			Namespace:    testutil.Namespace(),
 		},
@@ -213,7 +209,7 @@ func generatePersistentVolumeClaim(harness *testHarness) {
 
 func generateSecret(harness *testHarness) {
 	secret := &api.Secret{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "secret-",
 			Namespace:    testutil.Namespace(),
 		},
@@ -230,7 +226,7 @@ func generateSecret(harness *testHarness) {
 
 func generateReplicationController(harness *testHarness) {
 	rc := &api.ReplicationController{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "rc-",
 			Namespace:    testutil.Namespace(),
 		},
@@ -238,7 +234,7 @@ func generateReplicationController(harness *testHarness) {
 			Replicas: 1,
 			Selector: map[string]string{"foo": "bar"},
 			Template: &api.PodTemplateSpec{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: "pod-",
 					Namespace:    testutil.Namespace(),
 					Labels:       map[string]string{"foo": "bar"},

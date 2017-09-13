@@ -11,16 +11,17 @@ import (
 	_ "github.com/openshift/origin/pkg/api/install"
 
 	osclient "github.com/openshift/origin/pkg/client"
-	projectapi "github.com/openshift/origin/pkg/project/api"
-	userapi "github.com/openshift/origin/pkg/user/api"
+	projectapi "github.com/openshift/origin/pkg/project/apis/project"
+	userapi "github.com/openshift/origin/pkg/user/apis/user"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
-	"k8s.io/kubernetes/pkg/client/cache"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/uuid"
-	"k8s.io/kubernetes/pkg/util/wait"
-	"k8s.io/kubernetes/pkg/watch"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/golang/glog"
@@ -40,7 +41,7 @@ type AnalyticsController struct {
 	maximumQueueLength    int
 	// required to lookup Projects and Users, as needed
 	client                  osclient.Interface
-	kclient                 kclient.Interface
+	kclient                 kclientset.Interface
 	namespaceStore          cache.Store
 	userStore               cache.Store
 	startTime               int64
@@ -57,7 +58,7 @@ type AnalyticsController struct {
 
 type AnalyticsControllerConfig struct {
 	Destinations            map[string]Destination
-	KubeClient              kclient.Interface
+	KubeClient              kclientset.Interface
 	OSClient                osclient.Interface
 	MaximumQueueLength      int
 	MetricsPollingFrequency int
@@ -143,7 +144,7 @@ func (c *AnalyticsController) runWatches() {
 			// any return from this func only exits that invocation of the func.
 			// wait.Until will call it again after its sync period.
 			glog.V(3).Infof("Starting watch for %s", n)
-			w, err := wfnc.watchFunc(api.ListOptions{})
+			w, err := wfnc.watchFunc(metav1.ListOptions{})
 			if err != nil {
 				glog.Errorf("error creating watch %s: %v", n, err)
 			}
@@ -225,20 +226,20 @@ func (c *AnalyticsController) runWatches() {
 
 func (c *AnalyticsController) runProjectWatch() {
 	namespaceLW := &cache.ListWatch{
-		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
-			return c.kclient.Namespaces().List(options)
+		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
+			return c.kclient.Core().Namespaces().List(options)
 		},
-		WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
-			return c.kclient.Namespaces().Watch(options)
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			return c.kclient.Core().Namespaces().Watch(options)
 		},
 	}
 	cache.NewReflector(namespaceLW, &api.Namespace{}, c.namespaceStore, 10*time.Minute).Run()
 
 	userLW := &cache.ListWatch{
-		ListFunc: func(options api.ListOptions) (runtime.Object, error) {
+		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
 			return c.client.Users().List(options)
 		},
-		WatchFunc: func(options api.ListOptions) (watch.Interface, error) {
+		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 			return c.client.Users().Watch(options)
 		},
 	}

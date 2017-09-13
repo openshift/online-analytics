@@ -3,12 +3,12 @@ package useranalytics
 import (
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/util/rand"
-	"k8s.io/kubernetes/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 var _ Destination = &mockDestination{}

@@ -5,21 +5,21 @@ import (
 	"time"
 
 	"github.com/openshift/origin/pkg/client/testclient"
-	projectapi "github.com/openshift/origin/pkg/project/api"
-	userapi "github.com/openshift/origin/pkg/user/api"
+	projectapi "github.com/openshift/origin/pkg/project/apis/project"
+	userapi "github.com/openshift/origin/pkg/user/apis/user"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	"k8s.io/kubernetes/pkg/watch"
+	ktestclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 )
 
 func TestAnalyticObjectCreation(t *testing.T) {
 	pod := &api.Pod{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foo",
 			Namespace: "bar",
-			CreationTimestamp: unversioned.Time{
+			CreationTimestamp: metav1.Time{
 				time.Now().Add(10 * time.Second),
 			},
 		},
@@ -37,7 +37,7 @@ func TestAnalyticObjectCreation(t *testing.T) {
 		t.Errorf("Expected %v but got %v", pod.CreationTimestamp.UnixNano(), ev.timestamp.UnixNano())
 	}
 
-	pod.DeletionTimestamp = &unversioned.Time{time.Now().Add(10 * time.Second)}
+	pod.DeletionTimestamp = &metav1.Time{time.Now().Add(10 * time.Second)}
 	ev, err = newEvent(pod, watch.Deleted)
 	if err != nil {
 		t.Errorf("Unexpected error %v", err)
@@ -68,7 +68,7 @@ func TestGetUserId(t *testing.T) {
 			expects:         "foobar",
 			config: &AnalyticsControllerConfig{
 				Destinations:            make(map[string]Destination),
-				KubeClient:              &ktestclient.Fake{},
+				KubeClient:              &ktestclient.Clientset{},
 				OSClient:                &testclient.Fake{},
 				MaximumQueueLength:      10000,
 				MetricsPollingFrequency: 5,
@@ -81,7 +81,7 @@ func TestGetUserId(t *testing.T) {
 			expects:         "abc123",
 			config: &AnalyticsControllerConfig{
 				Destinations:            make(map[string]Destination),
-				KubeClient:              &ktestclient.Fake{},
+				KubeClient:              &ktestclient.Clientset{},
 				OSClient:                &testclient.Fake{},
 				MaximumQueueLength:      10000,
 				MetricsPollingFrequency: 5,
@@ -104,7 +104,7 @@ func TestGetUserId(t *testing.T) {
 		}
 
 		user := &userapi.User{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: "foo-user",
 				UID:  "abc123",
 			},
@@ -116,7 +116,7 @@ func TestGetUserId(t *testing.T) {
 		}
 
 		namespace := &api.Namespace{
-			ObjectMeta: api.ObjectMeta{
+			ObjectMeta: metav1.ObjectMeta{
 				Name: "foo",
 				Annotations: map[string]string{
 					projectapi.ProjectRequester: user.Name,
