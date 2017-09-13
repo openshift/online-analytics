@@ -180,7 +180,7 @@ objects:
       dockerStrategy:
         from:
           kind: DockerImage
-          name: golang:1.7
+          name: golang:1.8
     output:
       to:
         kind: ImageStreamTag
