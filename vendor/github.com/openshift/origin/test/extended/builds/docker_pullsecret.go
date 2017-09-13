@@ -6,6 +6,8 @@ import (
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
 
+	"k8s.io/kubernetes/test/e2e/framework"
+
 	exutil "github.com/openshift/origin/test/extended/util"
 )
 
@@ -23,12 +25,13 @@ var _ = g.Describe("[builds][pullsecret][Conformance] docker build using a pull 
 
 	g.JustBeforeEach(func() {
 		g.By("waiting for builder service account")
-		err := exutil.WaitForBuilderAccount(oc.AdminKubeREST().ServiceAccounts(oc.Namespace()))
+		err := exutil.WaitForBuilderAccount(oc.AdminKubeClient().Core().ServiceAccounts(oc.Namespace()))
 		o.Expect(err).NotTo(o.HaveOccurred())
 	})
 
 	g.Describe("Building from a template", func() {
 		g.It("should create a docker build that pulls using a secret run it", func() {
+			framework.SkipIfProviderIs("gce")
 			oc.SetOutputDir(exutil.TestContext.OutputDir)
 
 			g.By(fmt.Sprintf("calling oc create -f %q", buildFixture))

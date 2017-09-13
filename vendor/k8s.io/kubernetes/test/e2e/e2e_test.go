@@ -19,12 +19,18 @@ package e2e
 import (
 	"testing"
 
+	_ "k8s.io/kubernetes/test/e2e/api"
+	_ "k8s.io/kubernetes/test/e2e/autoscaling"
+	_ "k8s.io/kubernetes/test/e2e/cluster-logging"
+	_ "k8s.io/kubernetes/test/e2e/extension"
 	"k8s.io/kubernetes/test/e2e/framework"
+	_ "k8s.io/kubernetes/test/e2e/perf"
+	_ "k8s.io/kubernetes/test/e2e/scheduling"
+	_ "k8s.io/kubernetes/test/e2e/storage"
 )
 
 func init() {
-	framework.RegisterCommonFlags()
-	framework.RegisterClusterFlags()
+	framework.ViperizeFlags()
 }
 
 func TestE2E(t *testing.T) {

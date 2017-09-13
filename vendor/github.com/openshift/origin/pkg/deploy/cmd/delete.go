@@ -4,27 +4,28 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kerrors "k8s.io/kubernetes/pkg/api/errors"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/kubectl"
 	kutil "k8s.io/kubernetes/pkg/util"
-	"k8s.io/kubernetes/pkg/util/wait"
 
 	"github.com/openshift/origin/pkg/client"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
 	"github.com/openshift/origin/pkg/deploy/util"
 )
 
 // NewDeploymentConfigReaper returns a new reaper for deploymentConfigs
-func NewDeploymentConfigReaper(oc client.Interface, kc kclient.Interface) kubectl.Reaper {
+func NewDeploymentConfigReaper(oc client.Interface, kc kclientset.Interface) kubectl.Reaper {
 	return &DeploymentConfigReaper{oc: oc, kc: kc, pollInterval: kubectl.Interval, timeout: kubectl.Timeout}
 }
 
 // DeploymentConfigReaper implements the Reaper interface for deploymentConfigs
 type DeploymentConfigReaper struct {
 	oc                    client.Interface
-	kc                    kclient.Interface
+	kc                    kclientset.Interface
 	pollInterval, timeout time.Duration
 }
 
@@ -41,7 +42,7 @@ func (reaper *DeploymentConfigReaper) pause(namespace, name string) (*deployapi.
 // Stop scales a replication controller via its deployment configuration down to
 // zero replicas, waits for all of them to get deleted and then deletes both the
 // replication controller and its deployment configuration.
-func (reaper *DeploymentConfigReaper) Stop(namespace, name string, timeout time.Duration, gracePeriod *kapi.DeleteOptions) error {
+func (reaper *DeploymentConfigReaper) Stop(namespace, name string, timeout time.Duration, gracePeriod *metav1.DeleteOptions) error {
 	// Pause the deployment configuration to prevent the new deployments from
 	// being triggered.
 	config, err := reaper.pause(namespace, name)
@@ -57,7 +58,7 @@ func (reaper *DeploymentConfigReaper) Stop(namespace, name string, timeout time.
 	// Determine if the deployment config controller noticed the pause.
 	if !configNotFound {
 		if err := wait.Poll(1*time.Second, 1*time.Minute, func() (bool, error) {
-			dc, err := reaper.oc.DeploymentConfigs(namespace).Get(name)
+			dc, err := reaper.oc.DeploymentConfigs(namespace).Get(name, metav1.GetOptions{})
 			if err != nil {
 				return false, err
 			}
@@ -82,8 +83,8 @@ func (reaper *DeploymentConfigReaper) Stop(namespace, name string, timeout time.
 	// Clean up deployments related to the config. Even if the deployment
 	// configuration has been deleted, we want to sweep the existing replication
 	// controllers and clean them up.
-	options := kapi.ListOptions{LabelSelector: util.ConfigSelector(name)}
-	rcList, err := reaper.kc.ReplicationControllers(namespace).List(options)
+	options := metav1.ListOptions{LabelSelector: util.ConfigSelector(name).String()}
+	rcList, err := reaper.kc.Core().ReplicationControllers(namespace).List(options)
 	if err != nil {
 		return err
 	}
@@ -112,13 +113,13 @@ func (reaper *DeploymentConfigReaper) Stop(namespace, name string, timeout time.
 		}
 
 		// Delete all deployer and hook pods
-		options = kapi.ListOptions{LabelSelector: util.DeployerPodSelector(rc.Name)}
-		podList, err := reaper.kc.Pods(rc.Namespace).List(options)
+		options = metav1.ListOptions{LabelSelector: util.DeployerPodSelector(rc.Name).String()}
+		podList, err := reaper.kc.Core().Pods(rc.Namespace).List(options)
 		if err != nil {
 			return err
 		}
 		for _, pod := range podList.Items {
-			err := reaper.kc.Pods(pod.Namespace).Delete(pod.Name, gracePeriod)
+			err := reaper.kc.Core().Pods(pod.Namespace).Delete(pod.Name, gracePeriod)
 			if err != nil {
 				// Better not error out here...
 				glog.Infof("Cannot delete lifecycle Pod %s/%s for deployment config %s/%s: %v", pod.Namespace, pod.Name, namespace, name, err)

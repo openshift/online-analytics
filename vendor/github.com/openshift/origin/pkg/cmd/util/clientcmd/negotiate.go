@@ -5,10 +5,10 @@ import (
 
 	"github.com/golang/glog"
 
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	restclient "k8s.io/client-go/rest"
 )
 
 // negotiateVersion queries the server's supported api versions to find a version that both client and server support.
@@ -17,11 +17,11 @@ import (
 //   commandline flag), and is unsupported by the server, print a warning to
 //   stderr and try client's registered versions in order of preference.
 // - If version is config default, and the server does not support it, return an error.
-func negotiateVersion(client *kclient.Client, config *restclient.Config, requestedGV *unversioned.GroupVersion, clientGVs []unversioned.GroupVersion) (*unversioned.GroupVersion, error) {
+func negotiateVersion(client restclient.Interface, config *restclient.Config, requestedGV *schema.GroupVersion, clientGVs []schema.GroupVersion) (*schema.GroupVersion, error) {
 	// Ensure we have a client
 	var err error
 	if client == nil {
-		client, err = kclient.New(config)
+		client, err = restclient.RESTClientFor(config)
 		if err != nil {
 			return nil, err
 		}
@@ -36,7 +36,7 @@ func negotiateVersion(client *kclient.Client, config *restclient.Config, request
 	// Get server versions
 	serverGVs, err := serverAPIVersions(client, "/oapi")
 	if err != nil {
-		if errors.IsNotFound(err) {
+		if errors.IsNotFound(err) || errors.IsForbidden(err) {
 			glog.V(4).Infof("Server path /oapi was not found, returning the requested group version %v", preferredGV)
 			return preferredGV, nil
 		}
@@ -58,26 +58,26 @@ func negotiateVersion(client *kclient.Client, config *restclient.Config, request
 }
 
 // serverAPIVersions fetches the server versions available from the groupless API at the given prefix
-func serverAPIVersions(c *kclient.Client, grouplessPrefix string) ([]unversioned.GroupVersion, error) {
+func serverAPIVersions(c restclient.Interface, grouplessPrefix string) ([]schema.GroupVersion, error) {
 	// Get versions doc
-	var v unversioned.APIVersions
+	var v metav1.APIVersions
 	if err := c.Get().AbsPath(grouplessPrefix).Do().Into(&v); err != nil {
-		return []unversioned.GroupVersion{}, err
+		return []schema.GroupVersion{}, err
 	}
 
 	// Convert to GroupVersion structs
-	serverAPIVersions := []unversioned.GroupVersion{}
+	serverAPIVersions := []schema.GroupVersion{}
 	for _, version := range v.Versions {
-		gv, err := unversioned.ParseGroupVersion(version)
+		gv, err := schema.ParseGroupVersion(version)
 		if err != nil {
-			return []unversioned.GroupVersion{}, err
+			return []schema.GroupVersion{}, err
 		}
 		serverAPIVersions = append(serverAPIVersions, gv)
 	}
 	return serverAPIVersions, nil
 }
 
-func matchAPIVersion(preferredGV *unversioned.GroupVersion, clientGVs []unversioned.GroupVersion, serverGVs []unversioned.GroupVersion) (*unversioned.GroupVersion, error) {
+func matchAPIVersion(preferredGV *schema.GroupVersion, clientGVs []schema.GroupVersion, serverGVs []schema.GroupVersion) (*schema.GroupVersion, error) {
 	// If version explicitly requested verify that both client and server support it.
 	// If server does not support warn, but try to negotiate a lower version.
 	if preferredGV != nil {
@@ -98,7 +98,7 @@ func matchAPIVersion(preferredGV *unversioned.GroupVersion, clientGVs []unversio
 	return nil, fmt.Errorf("failed to negotiate an api version; server supports: %v, client supports: %v", serverGVs, clientGVs)
 }
 
-func copyGroupVersion(version *unversioned.GroupVersion) *unversioned.GroupVersion {
+func copyGroupVersion(version *schema.GroupVersion) *schema.GroupVersion {
 	if version == nil {
 		return nil
 	}
@@ -106,7 +106,7 @@ func copyGroupVersion(version *unversioned.GroupVersion) *unversioned.GroupVersi
 	return &versionCopy
 }
 
-func containsGroupVersion(versions []unversioned.GroupVersion, version unversioned.GroupVersion) bool {
+func containsGroupVersion(versions []schema.GroupVersion, version schema.GroupVersion) bool {
 	for _, v := range versions {
 		if v == version {
 			return true

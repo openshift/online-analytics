@@ -40,27 +40,16 @@ os::cmd::expect_success_and_text 'oadm' 'Administrative Commands'
 os::cmd::expect_success_and_text 'openshift admin' 'Administrative Commands'
 os::cmd::expect_success_and_text 'oadm' 'Component Installation:'
 os::cmd::expect_success_and_text 'oadm' 'Security and Policy:'
-os::cmd::expect_success_and_text 'oadm ca' 'Manage certificates'
+os::cmd::expect_success_and_text 'oc adm ca' 'Manage certificates'
 os::cmd::expect_success_and_text 'openshift start kubernetes' 'Kubernetes server components'
 os::cmd::expect_success_and_text 'oc exec --help' '\[options\] POD \[\-c CONTAINER\] \-\- COMMAND \[args\.\.\.\]$'
 os::cmd::expect_success_and_text 'oc rsh --help' '\[options\] POD \[COMMAND\]$'
 
 # check deprecated admin cmds for backward compatibility
-os::cmd::expect_success_and_text 'oadm create-master-certs -h' 'Create keys and certificates'
-os::cmd::expect_success_and_text 'oadm create-key-pair -h' 'Create an RSA key pair'
-os::cmd::expect_success_and_text 'oadm create-server-cert -h' 'Create a key and server certificate'
-os::cmd::expect_success_and_text 'oadm create-signer-cert -h' 'Create a self-signed CA'
-
-# check whether product is recognized
-os::cmd::expect_success_and_text 'origin' 'Origin Application Platform'
-os::cmd::expect_success_and_text 'origin' 'Origin distribution of Kubernetes'
-os::cmd::expect_success_and_not_text 'origin' '(Atomic|OpenShift)'
-os::cmd::expect_success_and_text 'openshift' 'OpenShift Application Platform'
-os::cmd::expect_success_and_text 'openshift' 'OpenShift distribution of Kubernetes'
-os::cmd::expect_success_and_not_text 'openshift' 'Atomic'
-os::cmd::expect_success_and_text 'atomic-enterprise' 'Atomic Enterprise Platform'
-os::cmd::expect_success_and_text 'atomic-enterprise' 'Atomic distribution of Kubernetes'
-os::cmd::expect_success_and_not_text 'atomic-enterprise' 'OpenShift'
+os::cmd::expect_success_and_text 'oc adm create-master-certs -h' 'Create keys and certificates'
+os::cmd::expect_success_and_text 'oc adm create-key-pair -h' 'Create an RSA key pair'
+os::cmd::expect_success_and_text 'oc adm create-server-cert -h' 'Create a key and server certificate'
+os::cmd::expect_success_and_text 'oc adm create-signer-cert -h' 'Create a self-signed CA'
 
 # help for root commands with --help flag must be consistent
 os::cmd::expect_success_and_text 'openshift --help' 'OpenShift Application Platform'

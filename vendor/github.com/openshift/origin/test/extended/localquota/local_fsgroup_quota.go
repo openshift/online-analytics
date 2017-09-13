@@ -115,14 +115,14 @@ func waitForQuotaToBeApplied(oc *exutil.CLI, fsGroup int, volDir string) error {
 	return fmt.Errorf("expected quota was not applied in time")
 }
 
-var _ = g.Describe("[volumes] Test local storage quota", func() {
+var _ = g.Describe("[Conformance][volumes] Test local storage quota", func() {
 	defer g.GinkgoRecover()
 	var (
 		oc                 = exutil.NewCLI("local-quota", exutil.KubeConfigPath())
 		emptyDirPodFixture = exutil.FixturePath("..", "..", "examples", "hello-openshift", "hello-pod.json")
 	)
 
-	g.Describe("FSGroup local storage quota", func() {
+	g.Describe("FSGroup local storage quota [local]", func() {
 		g.It("should be applied to XFS filesystem when a pod is created", func() {
 			oc.SetOutputDir(exutil.TestContext.OutputDir)
 			project := oc.Namespace()
@@ -133,7 +133,10 @@ var _ = g.Describe("[volumes] Test local storage quota", func() {
 			o.Expect(volDir).NotTo(o.Equal(""))
 			args := []string{"-f", "-c", "'%T'", volDir}
 			outBytes, _ := exec.Command("stat", args...).Output()
-			o.Expect(strings.Contains(string(outBytes), "xfs")).To(o.BeTrue())
+			fmt.Fprintf(g.GinkgoWriter, "Volume directory status: \n%s\n", outBytes)
+			if !strings.Contains(string(outBytes), "xfs") {
+				g.Skip("Volume directory is not on an XFS filesystem, skipping...")
+			}
 
 			g.By("lookup test projects fsGroup ID")
 			fsGroup, err := lookupFSGroup(oc, project)

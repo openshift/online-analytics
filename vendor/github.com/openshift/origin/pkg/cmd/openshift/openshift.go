@@ -9,17 +9,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	proxyapp "k8s.io/kubernetes/cmd/kube-proxy/app"
+	ktemplates "k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 
-	"github.com/openshift/origin/pkg/cmd/admin"
-	diagnostics "github.com/openshift/origin/pkg/cmd/admin/diagnostics"
-	sync "github.com/openshift/origin/pkg/cmd/admin/groups/sync/cli"
-	"github.com/openshift/origin/pkg/cmd/admin/validate"
-	"github.com/openshift/origin/pkg/cmd/cli"
-	"github.com/openshift/origin/pkg/cmd/cli/cmd"
-	"github.com/openshift/origin/pkg/cmd/experimental/buildchain"
-	configcmd "github.com/openshift/origin/pkg/cmd/experimental/config"
-	exipfailover "github.com/openshift/origin/pkg/cmd/experimental/ipfailover"
 	"github.com/openshift/origin/pkg/cmd/flagtypes"
 	"github.com/openshift/origin/pkg/cmd/infra/builder"
 	"github.com/openshift/origin/pkg/cmd/infra/deployer"
@@ -30,11 +23,19 @@ import (
 	"github.com/openshift/origin/pkg/cmd/templates"
 	cmdutil "github.com/openshift/origin/pkg/cmd/util"
 	"github.com/openshift/origin/pkg/cmd/util/clientcmd"
-	"github.com/openshift/origin/pkg/cmd/util/term"
+	"github.com/openshift/origin/pkg/oc/admin"
+	diagnostics "github.com/openshift/origin/pkg/oc/admin/diagnostics"
+	sync "github.com/openshift/origin/pkg/oc/admin/groups/sync/cli"
+	"github.com/openshift/origin/pkg/oc/admin/validate"
+	"github.com/openshift/origin/pkg/oc/cli"
+	"github.com/openshift/origin/pkg/oc/cli/cmd"
+	"github.com/openshift/origin/pkg/oc/experimental/buildchain"
+	configcmd "github.com/openshift/origin/pkg/oc/experimental/config"
+	exipfailover "github.com/openshift/origin/pkg/oc/experimental/ipfailover"
 )
 
 var (
-	openshiftLong = templates.LongDesc(`
+	openshiftLong = ktemplates.LongDesc(`
 		%[2]s
 
 		The %[3]s helps you build, deploy, and manage your applications on top of
@@ -48,7 +49,7 @@ var (
 func CommandFor(basename string) *cobra.Command {
 	var cmd *cobra.Command
 
-	in, out, errout := os.Stdin, term.NewResponsiveWriter(os.Stdout), os.Stderr
+	in, out, errout := os.Stdin, os.Stdout, os.Stderr
 
 	// Make case-insensitive and strip executable suffix if present
 	if runtime.GOOS == "windows" {
@@ -69,6 +70,12 @@ func CommandFor(basename string) *cobra.Command {
 		cmd = builder.NewCommandS2IBuilder(basename)
 	case "openshift-docker-build":
 		cmd = builder.NewCommandDockerBuilder(basename)
+	case "openshift-git-clone":
+		cmd = builder.NewCommandGitClone(basename)
+	case "openshift-manage-dockerfile":
+		cmd = builder.NewCommandManageDockerfile(basename)
+	case "openshift-extract-image-content":
+		cmd = builder.NewCommandExtractImageContent(basename)
 	case "oc", "osc":
 		cmd = cli.NewCommandCLI(basename, basename, in, out, errout)
 	case "oadm", "osadm":
@@ -82,12 +89,12 @@ func CommandFor(basename string) *cobra.Command {
 	case "kubelet":
 		cmd = kubernetes.NewKubeletCommand(basename, basename, out)
 	case "kube-proxy":
-		cmd = kubernetes.NewProxyCommand(basename, basename, out)
+		cmd = proxyapp.NewProxyCommand()
 	case "kube-scheduler":
 		cmd = kubernetes.NewSchedulerCommand(basename, basename, out)
 	case "kubernetes":
 		cmd = kubernetes.NewCommand(basename, basename, out, errout)
-	case "origin", "atomic-enterprise":
+	case "origin":
 		cmd = NewCommandOpenShift(basename)
 	default:
 		cmd = NewCommandOpenShift("openshift")
@@ -103,7 +110,7 @@ func CommandFor(basename string) *cobra.Command {
 
 // NewCommandOpenShift creates the standard OpenShift command
 func NewCommandOpenShift(name string) *cobra.Command {
-	in, out, errout := os.Stdin, term.NewResponsiveWriter(os.Stdout), os.Stderr
+	in, out, errout := os.Stdin, os.Stdout, os.Stderr
 
 	root := &cobra.Command{
 		Use:   name,
@@ -171,24 +178,24 @@ func newExperimentalCommand(name, fullName string) *cobra.Command {
 	experimental.AddCommand(buildchain.NewCmdBuildChain(name, fullName+" "+buildchain.BuildChainRecommendedCommandName, f, out))
 	experimental.AddCommand(configcmd.NewCmdConfig(configcmd.ConfigRecommendedName, fullName+" "+configcmd.ConfigRecommendedName, f, out, errout))
 	deprecatedDiag := diagnostics.NewCmdDiagnostics(diagnostics.DiagnosticsRecommendedName, fullName+" "+diagnostics.DiagnosticsRecommendedName, out)
-	deprecatedDiag.Deprecated = fmt.Sprintf(`use "oadm %[1]s" to run diagnostics instead.`, diagnostics.DiagnosticsRecommendedName)
+	deprecatedDiag.Deprecated = fmt.Sprintf(`use "oc adm %[1]s" to run diagnostics instead.`, diagnostics.DiagnosticsRecommendedName)
 	experimental.AddCommand(deprecatedDiag)
 	experimental.AddCommand(cmd.NewCmdOptions(out))
 
-	// these groups also live under `oadm groups {sync,prune}` and are here only for backwards compatibility
+	// these groups also live under `oc adm groups {sync,prune}` and are here only for backwards compatibility
 	experimental.AddCommand(sync.NewCmdSync("sync-groups", fullName+" "+"sync-groups", f, out))
 	experimental.AddCommand(sync.NewCmdPrune("prune-groups", fullName+" "+"prune-groups", f, out))
 	return experimental
 }
 
 var (
-	completion_long = templates.LongDesc(`
+	completion_long = ktemplates.LongDesc(`
 		Output shell completion code for the given shell (bash or zsh).
 
 		This command prints shell code which must be evaluation to provide interactive
 		completion of kubectl commands.`)
 
-	completion_example = templates.Examples(`
+	completion_example = ktemplates.Examples(`
 		$ source <(kubectl completion bash)
 
 		will load the kubectl completion code for bash. Note that this depends on the bash-completion

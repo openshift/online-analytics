@@ -3,8 +3,6 @@
 # Extended tests for logging in using GSSAPI
 source "$(dirname "${BASH_SOURCE}")/../../hack/lib/init.sh"
 
-starttime="$(date +%s)"
-
 project_name='gssapiproxy'
 test_name="test-extended/${project_name}"
 
@@ -12,14 +10,12 @@ os::build::setup_env
 
 os::util::environment::use_sudo
 os::util::environment::setup_time_vars
-os::util::environment::setup_all_server_vars "${test_name}"
+os::cleanup::tmpdir
+os::util::environment::setup_all_server_vars
 
 os::log::system::start
 
-ensure_iptables_or_die
-
-# TODO(skuznets): Fix vagrant openshift so env vars can be passed to this script
-JUNIT_REPORT=true
+os::util::ensure::iptables_privileges_exist
 
 # Allow setting $JUNIT_REPORT to toggle output behavior
 if [[ -n "${JUNIT_REPORT:-}" ]]; then
@@ -34,40 +30,11 @@ os::test::junit::declare_suite_start "${test_name}"
 os::cmd::expect_success_and_text 'oc version' 'GSSAPI Kerberos SPNEGO'
 
 function cleanup() {
-    out=$?
-    set +e
-    cleanup_openshift
-
-    # TODO(skuznets): un-hack this nonsense once traps are in a better state
-    if [[ -n "${JUNIT_REPORT_OUTPUT:-}" ]]; then
-      # get the jUnit output file into a workable state in case we crashed in the middle of testing something
-      os::test::junit::reconcile_output
-
-      # check that we didn't mangle jUnit output
-      os::test::junit::check_test_counters
-
-      # use the junitreport tool to generate us a report
-      "${OS_ROOT}/hack/build-go.sh" tools/junitreport
-      junitreport="$(os::build::find-binary junitreport)"
-
-      if [[ -z "${junitreport}" ]]; then
-          echo "It looks as if you don't have a compiled junitreport binary"
-          echo
-          echo "If you are running from a clone of the git repo, please run"
-          echo "'./hack/build-go.sh tools/junitreport'."
-          exit 1
-      fi
-
-      cat "${JUNIT_REPORT_OUTPUT}" "${junit_gssapi_output}"    \
-        | "${junitreport}" --type oscmd                        \
-                           --suites nested                     \
-                           --roots github.com/openshift/origin \
-                           --output "${ARTIFACT_DIR}/report.xml"
-      cat "${ARTIFACT_DIR}/report.xml" | "${junitreport}" summarize
-    fi
-
-    endtime=$(date +%s); echo "$0 took $((endtime - starttime)) seconds"
-    exit $out
+    return_code=$?
+    os::test::junit::generate_report
+    os::cleanup::all
+    os::util::describe_return_code "${return_code}"
+    exit "${return_code}"
 }
 trap "cleanup" EXIT
 
@@ -86,6 +53,11 @@ cp "${SERVER_CONFIG_DIR}/master/master-config.yaml" "${SERVER_CONFIG_DIR}/master
 openshift ex config patch "${SERVER_CONFIG_DIR}/master/master-config.tmp.yaml" --patch="${oauth_patch}" > "${SERVER_CONFIG_DIR}/master/master-config.yaml"
 os::start::server
 
+# Allow setting $JUNIT_REPORT to toggle output behavior
+if [[ -n "${JUNIT_REPORT:-}" ]]; then
+	export JUNIT_REPORT_OUTPUT="${LOG_DIR}/raw_test_output.log"
+fi
+
 export KUBECONFIG="${ADMIN_KUBECONFIG}"
 
 os::start::registry
@@ -93,7 +65,7 @@ os::cmd::expect_success 'oc rollout status dc/docker-registry'
 
 os::cmd::expect_success 'oc login -u system:admin'
 os::cmd::expect_success "oc new-project ${project_name}"
-os::cmd::expect_success "oadm policy add-scc-to-user anyuid -z default -n ${project_name}"
+os::cmd::expect_success "oc adm policy add-scc-to-user anyuid -z default -n ${project_name}"
 
 # create all the resources we need
 os::cmd::expect_success "oc create -f '${test_data_location}/proxy'"
@@ -136,7 +108,7 @@ function update_auth_proxy_config() {
     spec+='{.items[0].status.conditions[?(@.type=="Ready")].status}'
 
     os::cmd::expect_success "oc set env dc/gssapiproxy-server SERVER='${server_config}'"
-    os::cmd::try_until_text "oc get pods -l deploymentconfig=gssapiproxy-server -o jsonpath='${spec}'" "^${server_config}_True$"
+    os::cmd::try_until_text "oc get pods -l deploymentconfig=gssapiproxy-server -o jsonpath='${spec}'" "^${server_config}_True$" $(( 10 * minute ))
 }
 
 function run_gssapi_tests() {

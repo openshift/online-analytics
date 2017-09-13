@@ -5,58 +5,69 @@ import (
 	"strings"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/sets"
+	clientgotesting "k8s.io/client-go/testing"
 	kapi "k8s.io/kubernetes/pkg/api"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/types"
-	"k8s.io/kubernetes/pkg/util/sets"
+	kapihelper "k8s.io/kubernetes/pkg/api/helper"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 
 	ostestclient "github.com/openshift/origin/pkg/client/testclient"
-	oauthapi "github.com/openshift/origin/pkg/oauth/api"
-	oauthapiv1 "github.com/openshift/origin/pkg/oauth/api/v1"
-	routeapi "github.com/openshift/origin/pkg/route/api"
+	oauthapi "github.com/openshift/origin/pkg/oauth/apis/oauth"
+	oauthapiv1 "github.com/openshift/origin/pkg/oauth/apis/oauth/v1"
+	routeapi "github.com/openshift/origin/pkg/route/apis/route"
 )
 
-var encoder = kapi.Codecs.LegacyCodec(oauthapiv1.SchemeGroupVersion)
-var decoder = kapi.Codecs.UniversalDecoder()
+var (
+	encoder                 = kapi.Codecs.LegacyCodec(oauthapiv1.SchemeGroupVersion)
+	decoder                 = kapi.Codecs.UniversalDecoder()
+	serviceAccountsResource = schema.GroupVersionResource{Group: "", Version: "", Resource: "serviceaccounts"}
+	secretsResource         = schema.GroupVersionResource{Group: "", Version: "", Resource: "secrets"}
+	secretKind              = schema.GroupVersionKind{Group: "", Version: "", Kind: "Secret"}
+	routesResource          = schema.GroupVersionResource{Group: "", Version: "", Resource: "routes"}
+	routeClientKind         = schema.GroupVersionKind{Group: "", Version: "", Kind: "Route"}
+)
 
 func TestGetClient(t *testing.T) {
 	testCases := []struct {
 		name       string
 		clientName string
-		kubeClient *ktestclient.Fake
+		kubeClient *fake.Clientset
 		osClient   *ostestclient.Fake
 
 		expectedDelegation  bool
 		expectedErr         string
 		expectedClient      *oauthapi.OAuthClient
-		expectedKubeActions []ktestclient.Action
-		expectedOSActions   []ktestclient.Action
+		expectedKubeActions []clientgotesting.Action
+		expectedOSActions   []clientgotesting.Action
 	}{
 		{
 			name:                "delegate",
 			clientName:          "not:serviceaccount",
-			kubeClient:          ktestclient.NewSimpleFake(),
+			kubeClient:          fake.NewSimpleClientset(),
 			osClient:            ostestclient.NewSimpleFake(),
 			expectedDelegation:  true,
-			expectedKubeActions: []ktestclient.Action{},
-			expectedOSActions:   []ktestclient.Action{},
+			expectedKubeActions: []clientgotesting.Action{},
+			expectedOSActions:   []clientgotesting.Action{},
 		},
 		{
 			name:                "missing sa",
 			clientName:          "system:serviceaccount:ns-01:missing-sa",
-			kubeClient:          ktestclient.NewSimpleFake(),
+			kubeClient:          fake.NewSimpleClientset(),
 			osClient:            ostestclient.NewSimpleFake(),
-			expectedErr:         `ServiceAccount "missing-sa" not found`,
-			expectedKubeActions: []ktestclient.Action{ktestclient.NewGetAction("serviceaccounts", "ns-01", "missing-sa")},
-			expectedOSActions:   []ktestclient.Action{},
+			expectedErr:         `serviceaccounts "missing-sa" not found`,
+			expectedKubeActions: []clientgotesting.Action{clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "missing-sa")},
+			expectedOSActions:   []clientgotesting.Action{},
 		},
 		{
 			name:       "sa no redirects",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace:   "ns-01",
 						Name:        "default",
 						Annotations: map[string]string{},
@@ -64,15 +75,15 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient:            ostestclient.NewSimpleFake(),
 			expectedErr:         `system:serviceaccount:ns-01:default has no redirectURIs; set serviceaccounts.openshift.io/oauth-redirecturi.<some-value>`,
-			expectedKubeActions: []ktestclient.Action{ktestclient.NewGetAction("serviceaccounts", "ns-01", "default")},
-			expectedOSActions:   []ktestclient.Action{},
+			expectedKubeActions: []clientgotesting.Action{clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default")},
+			expectedOSActions:   []clientgotesting.Action{},
 		},
 		{
 			name:       "sa no tokens",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace:   "ns-01",
 						Name:        "default",
 						Annotations: map[string]string{OAuthRedirectModelAnnotationURIPrefix + "one": "http://anywhere"},
@@ -80,18 +91,18 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient:    ostestclient.NewSimpleFake(),
 			expectedErr: `system:serviceaccount:ns-01:default has no tokens`,
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{},
+			expectedOSActions: []clientgotesting.Action{},
 		},
 		{
 			name:       "good SA",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace:   "ns-01",
 						Name:        "default",
 						UID:         types.UID("any"),
@@ -99,7 +110,7 @@ func TestGetClient(t *testing.T) {
 					},
 				},
 				&kapi.Secret{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						Annotations: map[string]string{
@@ -112,24 +123,24 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient: ostestclient.NewSimpleFake(),
 			expectedClient: &oauthapi.OAuthClient{
-				ObjectMeta:        kapi.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
+				ObjectMeta:        metav1.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
 				ScopeRestrictions: getScopeRestrictionsFor("ns-01", "default"),
 				AdditionalSecrets: []string{"foo"},
 				RedirectURIs:      []string{"http://anywhere"},
 				GrantMethod:       oauthapi.GrantHandlerPrompt,
 			},
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{},
+			expectedOSActions: []clientgotesting.Action{},
 		},
 		{
 			name:       "good SA with valid, simple route redirects",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						UID:       types.UID("any"),
@@ -140,7 +151,7 @@ func TestGetClient(t *testing.T) {
 					},
 				},
 				&kapi.Secret{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						Annotations: map[string]string{
@@ -153,7 +164,7 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient: ostestclient.NewSimpleFake(
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route1",
 						UID:       types.UID("route1"),
@@ -170,38 +181,38 @@ func TestGetClient(t *testing.T) {
 				},
 			),
 			expectedClient: &oauthapi.OAuthClient{
-				ObjectMeta:        kapi.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
+				ObjectMeta:        metav1.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
 				ScopeRestrictions: getScopeRestrictionsFor("ns-01", "default"),
 				AdditionalSecrets: []string{"foo"},
 				RedirectURIs:      []string{"http://anywhere", "https://example1.com/defaultpath"},
 				GrantMethod:       oauthapi.GrantHandlerPrompt,
 			},
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{
-				ktestclient.NewGetAction("routes", "ns-01", "route1"),
+			expectedOSActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(routesResource, "ns-01", "route1"),
 			},
 		},
 		{
 			name:       "good SA with invalid route redirects",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						UID:       types.UID("any"),
 						Annotations: map[string]string{
 							OAuthRedirectModelAnnotationURIPrefix + "one":     "http://anywhere",
 							OAuthRedirectModelAnnotationReferencePrefix + "1": buildRedirectObjectReferenceString(routeKind, "route1", "wronggroup"),
-							OAuthRedirectModelAnnotationReferencePrefix + "2": buildRedirectObjectReferenceString("wrongkind", "route1", ""),
+							OAuthRedirectModelAnnotationReferencePrefix + "2": buildRedirectObjectReferenceString("wrongkind", "route1", "route.openshift.io"),
 						},
 					},
 				},
 				&kapi.Secret{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						Annotations: map[string]string{
@@ -214,7 +225,7 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient: ostestclient.NewSimpleFake(
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route1",
 						UID:       types.UID("route1"),
@@ -233,24 +244,24 @@ func TestGetClient(t *testing.T) {
 				},
 			),
 			expectedClient: &oauthapi.OAuthClient{
-				ObjectMeta:        kapi.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
+				ObjectMeta:        metav1.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
 				ScopeRestrictions: getScopeRestrictionsFor("ns-01", "default"),
 				AdditionalSecrets: []string{"foo"},
 				RedirectURIs:      []string{"http://anywhere"},
 				GrantMethod:       oauthapi.GrantHandlerPrompt,
 			},
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{},
+			expectedOSActions: []clientgotesting.Action{},
 		},
 		{
 			name:       "good SA with a route that don't have a host",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						UID:       types.UID("any"),
@@ -261,7 +272,7 @@ func TestGetClient(t *testing.T) {
 					},
 				},
 				&kapi.Secret{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						Annotations: map[string]string{
@@ -274,7 +285,7 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient: ostestclient.NewSimpleFake(
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route1",
 						UID:       types.UID("route1"),
@@ -291,39 +302,39 @@ func TestGetClient(t *testing.T) {
 				},
 			),
 			expectedClient: &oauthapi.OAuthClient{
-				ObjectMeta:        kapi.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
+				ObjectMeta:        metav1.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
 				ScopeRestrictions: getScopeRestrictionsFor("ns-01", "default"),
 				AdditionalSecrets: []string{"foo"},
 				RedirectURIs:      []string{"http://anywhere"},
 				GrantMethod:       oauthapi.GrantHandlerPrompt,
 			},
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{
-				ktestclient.NewGetAction("routes", "ns-01", "route1"),
+			expectedOSActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(routesResource, "ns-01", "route1"),
 			},
 		},
 		{
 			name:       "good SA with routes that don't have hosts, some of which are empty or duplicates",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						UID:       types.UID("any"),
 						Annotations: map[string]string{
 							OAuthRedirectModelAnnotationURIPrefix + "one":     "http://anywhere",
-							OAuthRedirectModelAnnotationReferencePrefix + "1": buildRedirectObjectReferenceString(routeKind, "route1", ""),
+							OAuthRedirectModelAnnotationReferencePrefix + "1": buildRedirectObjectReferenceString(routeKind, "route1", "route.openshift.io"),
 							OAuthRedirectModelAnnotationReferencePrefix + "2": buildRedirectObjectReferenceString(routeKind, "route2", ""),
 							OAuthRedirectModelAnnotationReferencePrefix + "3": buildRedirectObjectReferenceString(routeKind, "missingroute", ""),
 						},
 					},
 				},
 				&kapi.Secret{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						Annotations: map[string]string{
@@ -336,7 +347,7 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient: ostestclient.NewSimpleFake(
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route1",
 						UID:       types.UID("route1"),
@@ -356,7 +367,7 @@ func TestGetClient(t *testing.T) {
 					},
 				},
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route2",
 						UID:       types.UID("route2"),
@@ -377,39 +388,39 @@ func TestGetClient(t *testing.T) {
 				},
 			),
 			expectedClient: &oauthapi.OAuthClient{
-				ObjectMeta:        kapi.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
+				ObjectMeta:        metav1.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
 				ScopeRestrictions: getScopeRestrictionsFor("ns-01", "default"),
 				AdditionalSecrets: []string{"foo"},
 				RedirectURIs:      []string{"http://anywhere", "https://a.com/defaultpath", "https://a.com/path2", "https://b.com/defaultpath", "https://b.com/path2"},
 				GrantMethod:       oauthapi.GrantHandlerPrompt,
 			},
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{
-				ktestclient.NewListAction("routes", "ns-01", kapi.ListOptions{}),
+			expectedOSActions: []clientgotesting.Action{
+				clientgotesting.NewListAction(routesResource, routeClientKind, "ns-01", metav1.ListOptions{}),
 			},
 		},
 		{
 			name:       "host overrides route data",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						UID:       types.UID("any"),
 						Annotations: map[string]string{
 							OAuthRedirectModelAnnotationReferencePrefix + "1": buildRedirectObjectReferenceString(routeKind, "route1", ""),
 							OAuthRedirectModelAnnotationURIPrefix + "1":       "//redhat.com",
-							OAuthRedirectModelAnnotationReferencePrefix + "2": buildRedirectObjectReferenceString(routeKind, "route2", ""),
+							OAuthRedirectModelAnnotationReferencePrefix + "2": buildRedirectObjectReferenceString(routeKind, "route2", "route.openshift.io"),
 							OAuthRedirectModelAnnotationURIPrefix + "2":       "//google.com",
 						},
 					},
 				},
 				&kapi.Secret{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						Annotations: map[string]string{
@@ -422,7 +433,7 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient: ostestclient.NewSimpleFake(
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route1",
 						UID:       types.UID("route1"),
@@ -438,7 +449,7 @@ func TestGetClient(t *testing.T) {
 					},
 				},
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route2",
 						UID:       types.UID("route2"),
@@ -456,26 +467,26 @@ func TestGetClient(t *testing.T) {
 				},
 			),
 			expectedClient: &oauthapi.OAuthClient{
-				ObjectMeta:        kapi.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
+				ObjectMeta:        metav1.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
 				ScopeRestrictions: getScopeRestrictionsFor("ns-01", "default"),
 				AdditionalSecrets: []string{"foo"},
 				RedirectURIs:      []string{"https://google.com/otherpath", "https://redhat.com/defaultpath"},
 				GrantMethod:       oauthapi.GrantHandlerPrompt,
 			},
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{
-				ktestclient.NewListAction("routes", "ns-01", kapi.ListOptions{}),
+			expectedOSActions: []clientgotesting.Action{
+				clientgotesting.NewListAction(routesResource, routeClientKind, "ns-01", metav1.ListOptions{}),
 			},
 		},
 		{
 			name:       "good SA with valid, route redirects using the same route twice",
 			clientName: "system:serviceaccount:ns-01:default",
-			kubeClient: ktestclient.NewSimpleFake(
+			kubeClient: fake.NewSimpleClientset(
 				&kapi.ServiceAccount{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						UID:       types.UID("any"),
@@ -483,12 +494,12 @@ func TestGetClient(t *testing.T) {
 							OAuthRedirectModelAnnotationURIPrefix + "1":       "/awesomepath",
 							OAuthRedirectModelAnnotationReferencePrefix + "1": buildRedirectObjectReferenceString(routeKind, "route1", ""),
 							OAuthRedirectModelAnnotationURIPrefix + "2":       "//:8000",
-							OAuthRedirectModelAnnotationReferencePrefix + "2": buildRedirectObjectReferenceString(routeKind, "route1", ""),
+							OAuthRedirectModelAnnotationReferencePrefix + "2": buildRedirectObjectReferenceString(routeKind, "route1", "route.openshift.io"),
 						},
 					},
 				},
 				&kapi.Secret{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "default",
 						Annotations: map[string]string{
@@ -501,7 +512,7 @@ func TestGetClient(t *testing.T) {
 				}),
 			osClient: ostestclient.NewSimpleFake(
 				&routeapi.Route{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Namespace: "ns-01",
 						Name:      "route1",
 						UID:       types.UID("route1"),
@@ -517,26 +528,26 @@ func TestGetClient(t *testing.T) {
 				},
 			),
 			expectedClient: &oauthapi.OAuthClient{
-				ObjectMeta:        kapi.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
+				ObjectMeta:        metav1.ObjectMeta{Name: "system:serviceaccount:ns-01:default"},
 				ScopeRestrictions: getScopeRestrictionsFor("ns-01", "default"),
 				AdditionalSecrets: []string{"foo"},
 				RedirectURIs:      []string{"https://woot.com/awesomepath", "https://woot.com:8000"},
 				GrantMethod:       oauthapi.GrantHandlerPrompt,
 			},
-			expectedKubeActions: []ktestclient.Action{
-				ktestclient.NewGetAction("serviceaccounts", "ns-01", "default"),
-				ktestclient.NewListAction("secrets", "ns-01", kapi.ListOptions{}),
+			expectedKubeActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(serviceAccountsResource, "ns-01", "default"),
+				clientgotesting.NewListAction(secretsResource, secretKind, "ns-01", metav1.ListOptions{}),
 			},
-			expectedOSActions: []ktestclient.Action{
-				ktestclient.NewGetAction("routes", "ns-01", "route1"),
+			expectedOSActions: []clientgotesting.Action{
+				clientgotesting.NewGetAction(routesResource, "ns-01", "route1"),
 			},
 		},
 	}
 
 	for _, tc := range testCases {
 		delegate := &fakeDelegate{}
-		getter := NewServiceAccountOAuthClientGetter(tc.kubeClient, tc.kubeClient, tc.osClient, delegate, oauthapi.GrantHandlerPrompt)
-		client, err := getter.GetClient(kapi.NewContext(), tc.clientName)
+		getter := NewServiceAccountOAuthClientGetter(tc.kubeClient.Core(), tc.kubeClient.Core(), tc.osClient, delegate, oauthapi.GrantHandlerPrompt)
+		client, err := getter.Get(tc.clientName, metav1.GetOptions{})
 		switch {
 		case len(tc.expectedErr) == 0 && err == nil:
 		case len(tc.expectedErr) == 0 && err != nil,
@@ -551,7 +562,7 @@ func TestGetClient(t *testing.T) {
 			continue
 		}
 
-		if !kapi.Semantic.DeepEqual(tc.expectedClient, client) {
+		if !kapihelper.Semantic.DeepEqual(tc.expectedClient, client) {
 			t.Errorf("%s: expected %#v, got %#v", tc.name, tc.expectedClient, client)
 			continue
 		}
@@ -573,7 +584,7 @@ type fakeDelegate struct {
 	called bool
 }
 
-func (d *fakeDelegate) GetClient(ctx kapi.Context, name string) (*oauthapi.OAuthClient, error) {
+func (d *fakeDelegate) Get(name string, options metav1.GetOptions) (*oauthapi.OAuthClient, error) {
 	d.called = true
 	return nil, nil
 }
@@ -781,7 +792,7 @@ func TestParseModelsMap(t *testing.T) {
 				OAuthRedirectModelAnnotationReferencePrefix + "one": buildRedirectObjectReferenceString(routeKind, "route1", ""),
 				OAuthRedirectModelAnnotationURIPrefix + "one":       "https://:8000/path1",
 
-				OAuthRedirectModelAnnotationReferencePrefix + "two": buildRedirectObjectReferenceString(routeKind, "route2", ""),
+				OAuthRedirectModelAnnotationReferencePrefix + "two": buildRedirectObjectReferenceString(routeKind, "route2", "route.openshift.io"),
 				OAuthRedirectModelAnnotationURIPrefix + "two":       "http://:9000/path2",
 			},
 			expected: map[string]model{
@@ -797,7 +808,7 @@ func TestParseModelsMap(t *testing.T) {
 					scheme: "http",
 					port:   "9000",
 					path:   "/path2",
-					group:  "",
+					group:  "route.openshift.io",
 					kind:   routeKind,
 					name:   "route2",
 				},
@@ -841,7 +852,7 @@ func TestGetRedirectURIs(t *testing.T) {
 			},
 			routes: []*routeapi.Route{
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "route1",
 						Namespace: "ns01",
 					},
@@ -855,7 +866,7 @@ func TestGetRedirectURIs(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "route2",
 						Namespace: "ns01",
 					},
@@ -915,7 +926,7 @@ func TestGetRedirectURIs(t *testing.T) {
 			},
 			routes: []*routeapi.Route{
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "route1",
 						Namespace: "ns01",
 					},
@@ -931,7 +942,7 @@ func TestGetRedirectURIs(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "route2",
 						Namespace: "ns01",
 					},
@@ -1014,7 +1025,7 @@ func TestRedirectURIsFromRoutes(t *testing.T) {
 			names:     sets.NewString("routeA"),
 			routes: []*routeapi.Route{
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "routeA",
 						Namespace: "ns01",
 					},
@@ -1045,7 +1056,7 @@ func TestRedirectURIsFromRoutes(t *testing.T) {
 			names:     sets.NewString("route0", "route1", "route2"),
 			routes: []*routeapi.Route{
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "route0",
 						Namespace: "ns01",
 					},
@@ -1061,7 +1072,7 @@ func TestRedirectURIsFromRoutes(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "route1",
 						Namespace: "ns01",
 					},
@@ -1078,7 +1089,7 @@ func TestRedirectURIsFromRoutes(t *testing.T) {
 					},
 				},
 				{
-					ObjectMeta: kapi.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      "route2",
 						Namespace: "ns01",
 					},

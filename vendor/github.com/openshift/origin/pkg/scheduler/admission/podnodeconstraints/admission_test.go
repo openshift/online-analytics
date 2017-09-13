@@ -5,32 +5,32 @@ import (
 	"fmt"
 	"testing"
 
-	admission "k8s.io/kubernetes/pkg/admission"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apiserver/pkg/admission"
+	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/authorization/authorizer"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	"k8s.io/kubernetes/pkg/auth/user"
-	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/serviceaccount"
-	"k8s.io/kubernetes/pkg/util/sets"
 
 	_ "github.com/openshift/origin/pkg/api/install"
-	authorizationapi "github.com/openshift/origin/pkg/authorization/api"
-	"github.com/openshift/origin/pkg/authorization/authorizer"
+	authorizationapi "github.com/openshift/origin/pkg/authorization/apis/authorization"
 	oadmission "github.com/openshift/origin/pkg/cmd/server/admission"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
 	"github.com/openshift/origin/pkg/scheduler/admission/podnodeconstraints/api"
-	securityapi "github.com/openshift/origin/pkg/security/api"
+	securityapi "github.com/openshift/origin/pkg/security/apis/security"
 )
 
 func TestPodNodeConstraints(t *testing.T) {
-	ns := kapi.NamespaceDefault
+	ns := metav1.NamespaceDefault
 	tests := []struct {
 		config           *api.PodNodeConstraintsConfig
 		resource         runtime.Object
-		kind             unversioned.GroupKind
-		groupresource    unversioned.GroupResource
+		kind             schema.GroupKind
+		groupresource    schema.GroupResource
 		userinfo         user.Info
 		reviewResponse   *authorizationapi.SubjectAccessReviewResponse
 		expectedResource string
@@ -105,7 +105,7 @@ func TestPodNodeConstraints(t *testing.T) {
 		errPrefix := fmt.Sprintf("%d", i)
 		prc := NewPodNodeConstraints(tc.config)
 		prc.(oadmission.WantsAuthorizer).SetAuthorizer(fakeAuthorizer(t))
-		err := prc.(oadmission.Validator).Validate()
+		err := prc.(admission.Validator).Validate()
 		if err != nil {
 			checkAdmitError(t, err, expectedError, errPrefix)
 			continue
@@ -120,12 +120,12 @@ func TestPodNodeConstraints(t *testing.T) {
 }
 
 func TestPodNodeConstraintsPodUpdate(t *testing.T) {
-	ns := kapi.NamespaceDefault
+	ns := metav1.NamespaceDefault
 	var expectedError error
 	errPrefix := "PodUpdate"
 	prc := NewPodNodeConstraints(testConfig())
 	prc.(oadmission.WantsAuthorizer).SetAuthorizer(fakeAuthorizer(t))
-	err := prc.(oadmission.Validator).Validate()
+	err := prc.(admission.Validator).Validate()
 	if err != nil {
 		checkAdmitError(t, err, expectedError, errPrefix)
 		return
@@ -136,12 +136,12 @@ func TestPodNodeConstraintsPodUpdate(t *testing.T) {
 }
 
 func TestPodNodeConstraintsNonHandledResources(t *testing.T) {
-	ns := kapi.NamespaceDefault
+	ns := metav1.NamespaceDefault
 	errPrefix := "ResourceQuotaTest"
 	var expectedError error
 	prc := NewPodNodeConstraints(testConfig())
 	prc.(oadmission.WantsAuthorizer).SetAuthorizer(fakeAuthorizer(t))
-	err := prc.(oadmission.Validator).Validate()
+	err := prc.(admission.Validator).Validate()
 	if err != nil {
 		checkAdmitError(t, err, expectedError, errPrefix)
 		return
@@ -152,7 +152,7 @@ func TestPodNodeConstraintsNonHandledResources(t *testing.T) {
 }
 
 func TestPodNodeConstraintsResources(t *testing.T) {
-	ns := kapi.NamespaceDefault
+	ns := metav1.NamespaceDefault
 	testconfigs := []struct {
 		config         *api.PodNodeConstraintsConfig
 		userinfo       user.Info
@@ -166,8 +166,8 @@ func TestPodNodeConstraintsResources(t *testing.T) {
 	}
 	testresources := []struct {
 		resource      func(bool) runtime.Object
-		kind          unversioned.GroupKind
-		groupresource unversioned.GroupResource
+		kind          schema.GroupKind
+		groupresource schema.GroupResource
 		prefix        string
 	}{
 		{
@@ -190,12 +190,6 @@ func TestPodNodeConstraintsResources(t *testing.T) {
 		},
 		{
 			resource:      job,
-			kind:          extensions.Kind("Job"),
-			groupresource: extensions.Resource("jobs"),
-			prefix:        "Job",
-		},
-		{
-			resource:      job,
 			kind:          batch.Kind("Job"),
 			groupresource: batch.Resource("jobs"),
 			prefix:        "Job",
@@ -208,8 +202,8 @@ func TestPodNodeConstraintsResources(t *testing.T) {
 		},
 		{
 			resource:      podTemplate,
-			kind:          deployapi.Kind("PodTemplate"),
-			groupresource: deployapi.Resource("podtemplates"),
+			kind:          deployapi.LegacyKind("PodTemplate"),
+			groupresource: deployapi.LegacyResource("podtemplates"),
 			prefix:        "PodTemplate",
 		},
 		{
@@ -265,7 +259,7 @@ func TestPodNodeConstraintsResources(t *testing.T) {
 					errPrefix := fmt.Sprintf("%s; %s; %s", tr.prefix, tp.prefix, top.operation)
 					prc := NewPodNodeConstraints(tc.config)
 					prc.(oadmission.WantsAuthorizer).SetAuthorizer(fakeAuthorizer(t))
-					err := prc.(oadmission.Validator).Validate()
+					err := prc.(admission.Validator).Validate()
 					if err != nil {
 						checkAdmitError(t, err, expectedError, errPrefix)
 						continue
@@ -414,7 +408,7 @@ func checkAdmitError(t *testing.T, err error, expectedError error, prefix string
 	case expectedError == nil && err != nil:
 		t.Errorf("%s: expected no error, got: %q", prefix, err.Error())
 	case expectedError != nil && err == nil:
-		t.Errorf("%s: expected error %q, no error recieved", prefix, expectedError.Error())
+		t.Errorf("%s: expected error %q, no error received", prefix, expectedError.Error())
 	}
 }
 
@@ -428,10 +422,9 @@ func fakeAuthorizer(t *testing.T) authorizer.Authorizer {
 	}
 }
 
-func (a *fakeTestAuthorizer) Authorize(ctx kapi.Context, passedAttributes authorizer.Action) (bool, string, error) {
-	a.t.Logf("Authorize: ctx: %#v", ctx)
-	ui, ok := kapi.UserFrom(ctx)
-	if !ok {
+func (a *fakeTestAuthorizer) Authorize(attributes authorizer.Attributes) (bool, string, error) {
+	ui := attributes.GetUser()
+	if ui == nil {
 		return false, "", fmt.Errorf("No valid UserInfo for Context")
 	}
 	// User with pods/bindings. permission:
@@ -440,10 +433,6 @@ func (a *fakeTestAuthorizer) Authorize(ctx kapi.Context, passedAttributes author
 	}
 	// User without pods/bindings. permission:
 	return false, "", nil
-}
-
-func (a *fakeTestAuthorizer) GetAllowedSubjects(ctx kapi.Context, attributes authorizer.Action) (sets.String, sets.String, error) {
-	return nil, nil, nil
 }
 
 func reviewResponse(allowed bool, msg string) *authorizationapi.SubjectAccessReviewResponse {

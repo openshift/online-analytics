@@ -31,9 +31,10 @@ var SupportedHosts = map[string]int{
 }
 
 type Commit struct {
-	Sha     string
-	Summary string
-	Files   []File
+	Sha         string
+	Summary     string
+	Description []string
+	Files       []File
 }
 
 func (c Commit) DeclaresUpstreamChange() bool {
@@ -59,6 +60,18 @@ func (c Commit) DeclaredUpstreamRepo() (string, error) {
 	return repo, nil
 }
 
+// HasVendoredCodeChanges verifies if the commit has any changes to Godeps/_workspace/
+// or vendor/ directories.
+func (c Commit) HasVendoredCodeChanges() bool {
+	for _, file := range c.Files {
+		if file.HasVendoredCodeChanges() {
+			return true
+		}
+	}
+	return false
+}
+
+// HasGodepsChanges verifies if the commit has any changes to Godeps/Godeps.json file.
 func (c Commit) HasGodepsChanges() bool {
 	for _, file := range c.Files {
 		if file.HasGodepsChanges() {
@@ -68,9 +81,11 @@ func (c Commit) HasGodepsChanges() bool {
 	return false
 }
 
-func (c Commit) HasNonGodepsChanges() bool {
+// HasNonVendoredCodeChanges verifies if the commit didn't modify Godeps/_workspace/
+// or vendor directories.
+func (c Commit) HasNonVendoredCodeChanges() bool {
 	for _, file := range c.Files {
-		if !file.HasGodepsChanges() {
+		if !file.HasVendoredCodeChanges() {
 			return true
 		}
 	}
@@ -80,7 +95,7 @@ func (c Commit) HasNonGodepsChanges() bool {
 func (c Commit) GodepsReposChanged() ([]string, error) {
 	repos := map[string]struct{}{}
 	for _, file := range c.Files {
-		if !file.HasGodepsChanges() {
+		if !file.HasVendoredCodeChanges() {
 			continue
 		}
 		repo, err := file.GodepsRepoChanged()
@@ -98,12 +113,21 @@ func (c Commit) GodepsReposChanged() ([]string, error) {
 
 type File string
 
+// HasVendoredCodeChanges verifies if the modified file is from Godeps/_workspace/
+// or vendor/ directories.
+func (f File) HasVendoredCodeChanges() bool {
+	return strings.HasPrefix(string(f), "Godeps/_workspace") ||
+		strings.HasPrefix(string(f), "vendor") ||
+		strings.HasPrefix(string(f), "pkg/build/vendor")
+}
+
+// HasGodepsChanges verifies if the modified file is Godeps/Godeps.json.
 func (f File) HasGodepsChanges() bool {
-	return strings.HasPrefix(string(f), "Godeps/_workspace") || strings.HasPrefix(string(f), "vendor")
+	return f == "Godeps/Godeps.json"
 }
 
 func (f File) GodepsRepoChanged() (string, error) {
-	if !f.HasGodepsChanges() {
+	if !f.HasVendoredCodeChanges() {
 		return "", fmt.Errorf("file doesn't appear to be a Godeps or vendor change")
 	}
 	// Find the _workspace or vendor path segment index.
@@ -191,18 +215,40 @@ func CommitsBetween(a, b string) ([]Commit, error) {
 
 func NewCommitFromOnelineLog(log string) (Commit, error) {
 	var commit Commit
+	var err error
 	parts := strings.Split(log, " ")
 	if len(parts) < 2 {
 		return commit, fmt.Errorf("invalid log entry: %s", log)
 	}
 	commit.Sha = parts[0]
 	commit.Summary = strings.Join(parts[1:], " ")
+	commit.Description, err = descriptionInCommit(commit.Sha)
+	if err != nil {
+		return commit, err
+	}
 	files, err := filesInCommit(commit.Sha)
 	if err != nil {
 		return commit, err
 	}
 	commit.Files = files
 	return commit, nil
+}
+
+func FetchRepo(repoDir string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	defer os.Chdir(cwd)
+
+	if err := os.Chdir(repoDir); err != nil {
+		return err
+	}
+
+	if stdout, stderr, err := run("git", "fetch", "origin"); err != nil {
+		return fmt.Errorf("out=%s, err=%s, %s", strings.TrimSpace(stdout), strings.TrimSpace(stderr), err)
+	}
+	return nil
 }
 
 func IsAncestor(commit1, commit2, repoDir string) (bool, error) {
@@ -214,10 +260,6 @@ func IsAncestor(commit1, commit2, repoDir string) (bool, error) {
 
 	if err := os.Chdir(repoDir); err != nil {
 		return false, err
-	}
-
-	if stdout, stderr, err := run("git", "fetch", "origin"); err != nil {
-		return false, fmt.Errorf("out=%s, err=%s, %s", strings.TrimSpace(stdout), strings.TrimSpace(stderr), err)
 	}
 
 	if stdout, stderr, err := run("git", "merge-base", "--is-ancestor", commit1, commit2); err != nil {
@@ -297,6 +339,22 @@ func filesInCommit(sha string) ([]File, error) {
 		files = append(files, File(filename))
 	}
 	return files, nil
+}
+
+func descriptionInCommit(sha string) ([]string, error) {
+	descriptionLines := []string{}
+	stdout, stderr, err := run("git", "show", "--quiet", sha)
+	if err != nil {
+		return descriptionLines, fmt.Errorf("%s: %s", stderr, err)
+	}
+
+	for _, commitLine := range strings.Split(stdout, "\n") {
+		if len(commitLine) == 0 {
+			continue
+		}
+		descriptionLines = append(descriptionLines, strings.Trim(commitLine, " "))
+	}
+	return descriptionLines, nil
 }
 
 func run(args ...string) (string, string, error) {

@@ -7,10 +7,10 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/spf13/pflag"
+	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/client/unversioned/clientcmd"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
 	osclient "github.com/openshift/origin/pkg/client"
 	"github.com/openshift/origin/pkg/cmd/flagtypes"
@@ -57,11 +57,12 @@ func AnonymousClientConfig(config *restclient.Config) restclient.Config {
 		Prefix:        config.Prefix,
 		ContentConfig: config.ContentConfig,
 		TLSClientConfig: restclient.TLSClientConfig{
-			CAFile: config.TLSClientConfig.CAFile,
-			CAData: config.TLSClientConfig.CAData,
+			CAFile:     config.TLSClientConfig.CAFile,
+			CAData:     config.TLSClientConfig.CAData,
+			Insecure:   config.Insecure,
+			ServerName: config.ServerName,
 		},
 		RateLimiter:   config.RateLimiter,
-		Insecure:      config.Insecure,
 		UserAgent:     config.UserAgent,
 		Transport:     config.Transport,
 		WrapTransport: config.WrapTransport,
@@ -231,10 +232,10 @@ func (cfg *Config) OpenShiftConfig() *restclient.Config {
 }
 
 // Clients returns an OpenShift and a Kubernetes client from a given configuration
-func (cfg *Config) Clients() (osclient.Interface, kclient.Interface, error) {
+func (cfg *Config) Clients() (osclient.Interface, kclientset.Interface, error) {
 	cfg.bindEnv()
 
-	kubeClient, err := kclient.New(cfg.KubeConfig())
+	kubeClientset, err := kclientset.NewForConfig(cfg.KubeConfig())
 	if err != nil {
 		return nil, nil, fmt.Errorf("Unable to configure Kubernetes client: %v", err)
 	}
@@ -244,5 +245,5 @@ func (cfg *Config) Clients() (osclient.Interface, kclient.Interface, error) {
 		return nil, nil, fmt.Errorf("Unable to configure Origin client: %v", err)
 	}
 
-	return osClient, kubeClient, nil
+	return osClient, kubeClientset, nil
 }

@@ -27,17 +27,24 @@ func main() {
 
 	// TODO: Filter out bump commits for now until we decide how to deal with
 	// them correctly.
+	// TODO: ...along with subtree merges.
 	nonbumpCommits := []util.Commit{}
 	for _, commit := range commits {
-		if !strings.HasPrefix(commit.Summary, "bump(") {
+		lastDescriptionLine := commit.Description[len(commit.Description)-1]
+		if !strings.HasPrefix(commit.Summary, "bump(") && !strings.HasPrefix(lastDescriptionLine, "git-subtree-split:") {
 			nonbumpCommits = append(nonbumpCommits, commit)
 		}
 	}
 
 	errs := []string{}
 	for _, validate := range AllValidators {
-		err := validate(nonbumpCommits)
-		if err != nil {
+		if err := validate(nonbumpCommits); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(os.Getenv("RESTORE_AND_VERIFY_GODEPS")) > 0 {
+		// Godeps verifies all commits, including bumps and UPSTREAM
+		if err := ValidateGodeps(commits); err != nil {
 			errs = append(errs, err.Error())
 		}
 	}

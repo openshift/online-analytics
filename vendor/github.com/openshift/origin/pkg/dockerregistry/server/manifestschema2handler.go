@@ -6,9 +6,10 @@ import (
 
 	"github.com/docker/distribution"
 	"github.com/docker/distribution/context"
+	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/manifest/schema2"
 
-	imageapi "github.com/openshift/origin/pkg/image/api"
+	imageapiv1 "github.com/openshift/origin/pkg/image/apis/image/v1"
 )
 
 var (
@@ -17,12 +18,12 @@ var (
 )
 
 func unmarshalManifestSchema2(content []byte) (distribution.Manifest, error) {
-	var m schema2.DeserializedManifest
-	if err := json.Unmarshal(content, &m); err != nil {
+	var deserializedManifest schema2.DeserializedManifest
+	if err := json.Unmarshal(content, &deserializedManifest); err != nil {
 		return nil, err
 	}
 
-	return &m, nil
+	return &deserializedManifest, nil
 }
 
 type manifestSchema2Handler struct {
@@ -32,7 +33,9 @@ type manifestSchema2Handler struct {
 
 var _ ManifestHandler = &manifestSchema2Handler{}
 
-func (h *manifestSchema2Handler) FillImageMetadata(ctx context.Context, image *imageapi.Image) error {
+func (h *manifestSchema2Handler) FillImageMetadata(ctx context.Context, image *imageapiv1.Image) error {
+	// The manifest.Config references a configuration object for a container by its digest.
+	// It needs to be fetched in order to fill an image object metadata below.
 	configBytes, err := h.repo.Blobs(ctx).Get(ctx, h.manifest.Config.Digest)
 	if err != nil {
 		context.GetLogger(ctx).Errorf("failed to get image config %s: %v", h.manifest.Config.Digest.String(), err)
@@ -40,11 +43,8 @@ func (h *manifestSchema2Handler) FillImageMetadata(ctx context.Context, image *i
 	}
 	image.DockerImageConfig = string(configBytes)
 
-	if err := imageapi.ImageWithMetadata(image); err != nil {
-		return err
-	}
-
-	return nil
+	// We need to populate the image metadata using the manifest.
+	return imageMetadataFromManifest(image)
 }
 
 func (h *manifestSchema2Handler) Manifest() distribution.Manifest {
@@ -63,7 +63,7 @@ func (h *manifestSchema2Handler) Verify(ctx context.Context, skipDependencyVerif
 		return nil
 	}
 
-	// we want to verify that referenced blobs exist locally or are accessible via
+	// we want to verify that referenced blobs exist locally or accessible over
 	// pullthroughBlobStore. The base image of this image can be remote repository
 	// and since we use pullthroughBlobStore all the layer existence checks will be
 	// successful. This means that the docker client will not attempt to send them
@@ -99,6 +99,7 @@ func (h *manifestSchema2Handler) Verify(ctx context.Context, skipDependencyVerif
 		if err != nil {
 			if err != distribution.ErrBlobUnknown {
 				errs = append(errs, err)
+				continue
 			}
 
 			// On error here, we always append unknown blob errors.
@@ -110,4 +111,12 @@ func (h *manifestSchema2Handler) Verify(ctx context.Context, skipDependencyVerif
 		return errs
 	}
 	return nil
+}
+
+func (h *manifestSchema2Handler) Digest() (digest.Digest, error) {
+	_, p, err := h.manifest.Payload()
+	if err != nil {
+		return "", err
+	}
+	return digest.FromBytes(p), nil
 }

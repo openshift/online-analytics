@@ -8,11 +8,10 @@ import (
 	"regexp"
 	"strings"
 
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	kcontainer "k8s.io/kubernetes/pkg/kubelet/container"
 
 	"github.com/openshift/origin/pkg/diagnostics/types"
-	sdnplugin "github.com/openshift/origin/pkg/sdn/plugin"
 )
 
 type LogInterface struct {
@@ -20,14 +19,14 @@ type LogInterface struct {
 	Logdir string
 }
 
-func (l *LogInterface) LogNode(kubeClient *kclient.Client) {
+func (l *LogInterface) LogNode(kubeClient kclientset.Interface) {
 	l.LogSystem()
 	l.LogServices()
 
 	l.Run("brctl show", "bridges")
 	l.Run("docker ps -a", "docker-ps")
-	l.Run(fmt.Sprintf("ovs-ofctl -O OpenFlow13 dump-flows %s", sdnplugin.BR), "flows")
-	l.Run(fmt.Sprintf("ovs-ofctl -O OpenFlow13 show %s", sdnplugin.BR), "ovs-show")
+	l.Run("ovs-ofctl -O OpenFlow13 dump-flows br0", "flows")
+	l.Run("ovs-ofctl -O OpenFlow13 show br0", "ovs-show")
 	l.Run("tc qdisc show", "tc-qdisc")
 	l.Run("tc class show", "tc-class")
 	l.Run("tc filter show", "tc-filter")
@@ -163,7 +162,7 @@ func (l *LogInterface) logNetworkInterfaces() {
 	})
 }
 
-func (l *LogInterface) logPodInfo(kubeClient *kclient.Client) {
+func (l *LogInterface) logPodInfo(kubeClient kclientset.Interface) {
 	pods, _, err := GetLocalAndNonLocalDiagnosticPods(kubeClient)
 	if err != nil {
 		l.Result.Error("DLogNet1003", err, err.Error())

@@ -9,20 +9,21 @@ import (
 	"regexp"
 	"time"
 
+	kerrs "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kerrs "k8s.io/kubernetes/pkg/api/errors"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/labels"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
-	authorizationapi "github.com/openshift/origin/pkg/authorization/api"
+	authorizationapi "github.com/openshift/origin/pkg/authorization/apis/authorization"
 	osclient "github.com/openshift/origin/pkg/client"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
 	"github.com/openshift/origin/pkg/diagnostics/types"
 )
 
 // ClusterRouter is a Diagnostic to check that there is a working router.
 type ClusterRouter struct {
-	KubeClient *kclient.Client
+	KubeClient kclientset.Interface
 	OsClient   *osclient.Client
 }
 
@@ -46,7 +47,7 @@ A router is not strictly required; however it is needed for accessing
 pods from external networks and its absence likely indicates an incomplete
 installation of the cluster.
 
-Use the 'oadm router' command to create a router.
+Use the 'oc adm router' command to create a router.
 `
 	clGetRtFailed = `
 Client error while retrieving "%s" DC. Client retrieved records
@@ -95,7 +96,7 @@ func (d *ClusterRouter) CanRun() (bool, error) {
 		return false, errors.New("must have kube and os client")
 	}
 	can, err := userCan(d.OsClient, authorizationapi.Action{
-		Namespace:    kapi.NamespaceDefault,
+		Namespace:    metav1.NamespaceDefault,
 		Verb:         "get",
 		Group:        deployapi.GroupName,
 		Resource:     "deploymentconfigs",
@@ -124,7 +125,7 @@ func (d *ClusterRouter) Check() types.DiagnosticResult {
 }
 
 func (d *ClusterRouter) getRouterDC(r types.DiagnosticResult) *deployapi.DeploymentConfig {
-	dc, err := d.OsClient.DeploymentConfigs(kapi.NamespaceDefault).Get(routerName)
+	dc, err := d.OsClient.DeploymentConfigs(metav1.NamespaceDefault).Get(routerName, metav1.GetOptions{})
 	if err != nil && reflect.TypeOf(err) == reflect.TypeOf(&kerrs.StatusError{}) {
 		r.Warn("DClu2001", err, fmt.Sprintf(clGetRtNone, routerName))
 		return nil
@@ -137,7 +138,7 @@ func (d *ClusterRouter) getRouterDC(r types.DiagnosticResult) *deployapi.Deploym
 }
 
 func (d *ClusterRouter) getRouterPods(dc *deployapi.DeploymentConfig, r types.DiagnosticResult) *kapi.PodList {
-	pods, err := d.KubeClient.Pods(kapi.NamespaceDefault).List(kapi.ListOptions{LabelSelector: labels.SelectorFromSet(dc.Spec.Selector)})
+	pods, err := d.KubeClient.Core().Pods(metav1.NamespaceDefault).List(metav1.ListOptions{LabelSelector: labels.SelectorFromSet(dc.Spec.Selector).String()})
 	if err != nil {
 		r.Error("DClu2004", err, fmt.Sprintf("Finding pods for '%s' DeploymentConfig failed. This should never happen. Error: (%[2]T) %[2]v", routerName, err))
 		return nil
@@ -170,7 +171,7 @@ func (s *lineScanner) Text() string { return s.Scanner.Text() }
 func (s *lineScanner) Close() error { return s.ReadCloser.Close() }
 
 func (d *ClusterRouter) getPodLogScanner(pod *kapi.Pod) (*lineScanner, error) {
-	readCloser, err := d.KubeClient.RESTClient.Get().
+	readCloser, err := d.KubeClient.Core().RESTClient().Get().
 		Namespace(pod.ObjectMeta.Namespace).
 		Name(pod.ObjectMeta.Name).
 		Resource("pods").SubResource("log").

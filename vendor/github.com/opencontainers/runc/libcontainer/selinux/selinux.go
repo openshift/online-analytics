@@ -395,6 +395,12 @@ func FreeLxcContexts(scon string) {
 	}
 }
 
+var roFileLabel string
+
+func GetROFileLabel() (fileLabel string) {
+	return roFileLabel
+}
+
 func GetLxcContexts() (processLabel string, fileLabel string) {
 	var (
 		val, key string
@@ -439,6 +445,9 @@ func GetLxcContexts() (processLabel string, fileLabel string) {
 			if key == "file" {
 				fileLabel = strings.Trim(val, "\"")
 			}
+			if key == "ro_file" {
+				roFileLabel = strings.Trim(val, "\"")
+			}
 		}
 	}
 
@@ -446,6 +455,9 @@ func GetLxcContexts() (processLabel string, fileLabel string) {
 		return "", ""
 	}
 
+	if roFileLabel == "" {
+		roFileLabel = fileLabel
+	}
 exit:
 	//	mcs := IntToMcs(os.Getpid(), 1024)
 	mcs := uniqMcs(1024)

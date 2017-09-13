@@ -6,41 +6,40 @@ import (
 	"strings"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
 
-	"github.com/openshift/origin/pkg/build/api"
+	buildapi "github.com/openshift/origin/pkg/build/apis/build"
+	"github.com/openshift/origin/pkg/generate/git"
 )
 
 func TestBuildInfo(t *testing.T) {
-	b := &api.Build{
-		ObjectMeta: kapi.ObjectMeta{
+	b := &buildapi.Build{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sample-app",
 			Namespace: "default",
 		},
-		Spec: api.BuildSpec{
-			CommonSpec: api.CommonSpec{
-				Source: api.BuildSource{
-					Git: &api.GitBuildSource{
+		Spec: buildapi.BuildSpec{
+			CommonSpec: buildapi.CommonSpec{
+				Source: buildapi.BuildSource{
+					Git: &buildapi.GitBuildSource{
 						URI: "github.com/openshift/sample-app",
 						Ref: "master",
 					},
 				},
-				Strategy: api.BuildStrategy{
-					SourceStrategy: &api.SourceBuildStrategy{
+				Strategy: buildapi.BuildStrategy{
+					SourceStrategy: &buildapi.SourceBuildStrategy{
 						Env: []kapi.EnvVar{
 							{Name: "RAILS_ENV", Value: "production"},
 						},
 					},
 				},
-				Revision: &api.SourceRevision{
-					Git: &api.GitSourceRevision{
-						Commit: "1575a90c569a7cc0eea84fbd3304d9df37c9f5ee",
-					},
-				},
 			},
 		},
 	}
-	got := buildInfo(b)
+	sourceInfo := &git.SourceInfo{}
+	sourceInfo.CommitID = "1575a90c569a7cc0eea84fbd3304d9df37c9f5ee"
+	got := buildInfo(b, sourceInfo)
 	want := []KeyValue{
 		{"OPENSHIFT_BUILD_NAME", "sample-app"},
 		{"OPENSHIFT_BUILD_NAMESPACE", "default"},
@@ -52,6 +51,17 @@ func TestBuildInfo(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildInfo(%+v) = %+v; want %+v", b, got, want)
 	}
+
+	b.Spec.Revision = &buildapi.SourceRevision{
+		Git: &buildapi.GitSourceRevision{
+			Commit: "1575a90c569a7cc0eea84fbd3304d9df37c9f5ee",
+		},
+	}
+	got = buildInfo(b, nil)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("buildInfo(%+v) = %+v; want %+v", b, got, want)
+	}
+
 }
 
 func TestRandomBuildTag(t *testing.T) {

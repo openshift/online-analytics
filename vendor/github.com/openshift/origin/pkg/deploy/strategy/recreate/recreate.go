@@ -5,16 +5,23 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/record"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/client/record"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	kcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
 	"k8s.io/kubernetes/pkg/kubectl"
-	"k8s.io/kubernetes/pkg/runtime"
 
 	"github.com/openshift/origin/pkg/client"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
 	strat "github.com/openshift/origin/pkg/deploy/strategy"
 	stratsupport "github.com/openshift/origin/pkg/deploy/strategy/support"
 	stratutil "github.com/openshift/origin/pkg/deploy/strategy/util"
@@ -33,9 +40,11 @@ type RecreateDeploymentStrategy struct {
 	// until is a condition that, if reached, will cause the strategy to exit early
 	until string
 	// rcClient is a client to access replication controllers
-	rcClient kclient.ReplicationControllersNamespacer
+	rcClient kcoreclient.ReplicationControllersGetter
+	// podClient is used to list and watch pods.
+	podClient kcoreclient.PodsGetter
 	// eventClient is a client to access events
-	eventClient kclient.EventNamespacer
+	eventClient kcoreclient.EventsGetter
 	// getUpdateAcceptor returns an UpdateAcceptor to verify the first replica
 	// of the deployment.
 	getUpdateAcceptor func(time.Duration, int32) strat.UpdateAcceptor
@@ -46,23 +55,26 @@ type RecreateDeploymentStrategy struct {
 	// codec is used to decode DeploymentConfigs contained in deployments.
 	decoder runtime.Decoder
 	// hookExecutor can execute a lifecycle hook.
-	hookExecutor hookExecutor
-	// retryTimeout is how long to wait for the replica count update to succeed
-	// before giving up.
-	retryTimeout time.Duration
+	hookExecutor stratsupport.HookExecutor
 	// retryPeriod is how often to try updating the replica count.
 	retryPeriod time.Duration
+	// retryParams encapsulates the retry parameters
+	retryParams *kubectl.RetryParams
 	// events records the events
 	events record.EventSink
+	// now returns the current time
+	now func() time.Time
 }
 
-// AcceptorInterval is how often the UpdateAcceptor should check for
-// readiness.
-const AcceptorInterval = 1 * time.Second
+const (
+	// acceptorInterval is how often the UpdateAcceptor should check for
+	// readiness.
+	acceptorInterval = 1 * time.Second
+)
 
 // NewRecreateDeploymentStrategy makes a RecreateDeploymentStrategy backed by
 // a real HookExecutor and client.
-func NewRecreateDeploymentStrategy(client kclient.Interface, tagClient client.ImageStreamTagsNamespacer, events record.EventSink, decoder runtime.Decoder, out, errOut io.Writer, until string) *RecreateDeploymentStrategy {
+func NewRecreateDeploymentStrategy(client kclientset.Interface, tagClient client.ImageStreamTagsNamespacer, events record.EventSink, decoder runtime.Decoder, out, errOut io.Writer, until string) *RecreateDeploymentStrategy {
 	if out == nil {
 		out = ioutil.Discard
 	}
@@ -75,15 +87,15 @@ func NewRecreateDeploymentStrategy(client kclient.Interface, tagClient client.Im
 		errOut:      errOut,
 		events:      events,
 		until:       until,
-		rcClient:    client,
-		eventClient: client,
+		rcClient:    client.Core(),
+		eventClient: client.Core(),
+		podClient:   client.Core(),
 		getUpdateAcceptor: func(timeout time.Duration, minReadySeconds int32) strat.UpdateAcceptor {
-			return stratsupport.NewAcceptNewlyObservedReadyPods(out, client, timeout, AcceptorInterval, minReadySeconds)
+			return stratsupport.NewAcceptAvailablePods(out, client.Core(), timeout)
 		},
 		scaler:       scaler,
 		decoder:      decoder,
-		hookExecutor: stratsupport.NewHookExecutor(client, tagClient, client, os.Stdout, decoder),
-		retryTimeout: 120 * time.Second,
+		hookExecutor: stratsupport.NewHookExecutor(client.Core(), tagClient, client.Core(), os.Stdout, decoder),
 		retryPeriod:  1 * time.Second,
 	}
 }
@@ -106,12 +118,25 @@ func (s *RecreateDeploymentStrategy) DeployWithAcceptor(from *kapi.ReplicationCo
 		return fmt.Errorf("couldn't decode config from deployment %s: %v", to.Name, err)
 	}
 
+	retryTimeout := time.Duration(deployapi.DefaultRecreateTimeoutSeconds) * time.Second
 	params := config.Spec.Strategy.RecreateParams
-	retryParams := kubectl.NewRetryParams(s.retryPeriod, s.retryTimeout)
-	waitParams := kubectl.NewRetryParams(s.retryPeriod, s.retryTimeout)
+	rollingParams := config.Spec.Strategy.RollingParams
+
+	if params != nil && params.TimeoutSeconds != nil {
+		retryTimeout = time.Duration(*params.TimeoutSeconds) * time.Second
+	}
+
+	// When doing the initial rollout for rolling strategy we use recreate and for that we
+	// have to set the TimeoutSecond based on the rollling strategy parameters.
+	if rollingParams != nil && rollingParams.TimeoutSeconds != nil {
+		retryTimeout = time.Duration(*rollingParams.TimeoutSeconds) * time.Second
+	}
+
+	s.retryParams = kubectl.NewRetryParams(s.retryPeriod, retryTimeout)
+	waitParams := kubectl.NewRetryParams(s.retryPeriod, retryTimeout)
 
 	if updateAcceptor == nil {
-		updateAcceptor = s.getUpdateAcceptor(time.Duration(*params.TimeoutSeconds)*time.Second, config.Spec.MinReadySeconds)
+		updateAcceptor = s.getUpdateAcceptor(retryTimeout, config.Spec.MinReadySeconds)
 	}
 
 	// Execute any pre-hook.
@@ -132,10 +157,12 @@ func (s *RecreateDeploymentStrategy) DeployWithAcceptor(from *kapi.ReplicationCo
 	// Scale down the from deployment.
 	if from != nil {
 		fmt.Fprintf(s.out, "--> Scaling %s down to zero\n", from.Name)
-		_, err := s.scaleAndWait(from, 0, retryParams, waitParams)
+		_, err := s.scaleAndWait(from, 0, s.retryParams, waitParams)
 		if err != nil {
 			return fmt.Errorf("couldn't scale %s to 0: %v", from.Name, err)
 		}
+		// Wait for pods to terminate.
+		s.waitForTerminatedPods(from, time.Duration(*params.TimeoutSeconds)*time.Second)
 	}
 
 	if s.until == "0%" {
@@ -160,7 +187,7 @@ func (s *RecreateDeploymentStrategy) DeployWithAcceptor(from *kapi.ReplicationCo
 			// Scale up to 1 and validate the replica,
 			// aborting if the replica isn't acceptable.
 			fmt.Fprintf(s.out, "--> Scaling %s to 1 before performing acceptance check\n", to.Name)
-			updatedTo, err := s.scaleAndWait(to, 1, retryParams, waitParams)
+			updatedTo, err := s.scaleAndWait(to, 1, s.retryParams, waitParams)
 			if err != nil {
 				return fmt.Errorf("couldn't scale %s to 1: %v", to.Name, err)
 			}
@@ -178,7 +205,7 @@ func (s *RecreateDeploymentStrategy) DeployWithAcceptor(from *kapi.ReplicationCo
 		// Complete the scale up.
 		if to.Spec.Replicas != int32(desiredReplicas) {
 			fmt.Fprintf(s.out, "--> Scaling %s to %d\n", to.Name, desiredReplicas)
-			updatedTo, err := s.scaleAndWait(to, desiredReplicas, retryParams, waitParams)
+			updatedTo, err := s.scaleAndWait(to, desiredReplicas, s.retryParams, waitParams)
 			if err != nil {
 				return fmt.Errorf("couldn't scale %s to %d: %v", to.Name, desiredReplicas, err)
 			}
@@ -207,28 +234,68 @@ func (s *RecreateDeploymentStrategy) DeployWithAcceptor(from *kapi.ReplicationCo
 	return nil
 }
 
-func (s *RecreateDeploymentStrategy) scaleAndWait(deployment *kapi.ReplicationController, replicas int, retry *kubectl.RetryParams, wait *kubectl.RetryParams) (*kapi.ReplicationController, error) {
+func (s *RecreateDeploymentStrategy) scaleAndWait(deployment *kapi.ReplicationController, replicas int, retry *kubectl.RetryParams, retryParams *kubectl.RetryParams) (*kapi.ReplicationController, error) {
 	if int32(replicas) == deployment.Spec.Replicas && int32(replicas) == deployment.Status.Replicas {
 		return deployment, nil
 	}
-	if err := s.scaler.Scale(deployment.Namespace, deployment.Name, uint(replicas), &kubectl.ScalePrecondition{Size: -1, ResourceVersion: ""}, retry, wait); err != nil {
+	var scaleErr error
+	err := wait.PollImmediate(1*time.Second, 30*time.Second, func() (bool, error) {
+		scaleErr = s.scaler.Scale(deployment.Namespace, deployment.Name, uint(replicas), &kubectl.ScalePrecondition{Size: -1, ResourceVersion: ""}, retry, retryParams)
+		if scaleErr == nil {
+			return true, nil
+		}
+		// This error is returned when the lifecycle admission plugin cache is not fully
+		// synchronized. In that case the scaling should be retried.
+		//
+		// FIXME: The error returned from admission should not be forbidden but come-back-later error.
+		if errors.IsForbidden(scaleErr) && strings.Contains(scaleErr.Error(), "not yet ready to handle request") {
+			return false, nil
+		}
+		return false, scaleErr
+	})
+	if err == wait.ErrWaitTimeout {
+		return nil, fmt.Errorf("%v: %v", err, scaleErr)
+	}
+	if err != nil {
 		return nil, err
 	}
 
-	return s.rcClient.ReplicationControllers(deployment.Namespace).Get(deployment.Name)
+	return s.rcClient.ReplicationControllers(deployment.Namespace).Get(deployment.Name, metav1.GetOptions{})
 }
 
-// hookExecutor knows how to execute a deployment lifecycle hook.
-type hookExecutor interface {
-	Execute(hook *deployapi.LifecycleHook, deployment *kapi.ReplicationController, suffix, label string) error
-}
-
-// hookExecutorImpl is a pluggable hookExecutor.
-type hookExecutorImpl struct {
-	executeFunc func(hook *deployapi.LifecycleHook, deployment *kapi.ReplicationController, suffix, label string) error
-}
-
-// Execute executes the provided lifecycle hook
-func (i *hookExecutorImpl) Execute(hook *deployapi.LifecycleHook, deployment *kapi.ReplicationController, suffix, label string) error {
-	return i.executeFunc(hook, deployment, suffix, label)
+// waitForTerminatedPods waits until all pods for the provided replication controller are terminated.
+func (s *RecreateDeploymentStrategy) waitForTerminatedPods(from *kapi.ReplicationController, timeout time.Duration) {
+	selector := labels.Set(from.Spec.Selector).AsSelector()
+	options := metav1.ListOptions{LabelSelector: selector.String()}
+	podList, err := s.podClient.Pods(from.Namespace).List(options)
+	if err != nil {
+		fmt.Fprintf(s.out, "--> Cannot list pods: %v\nNew pods may be scaled up before old pods terminate\n", err)
+		return
+	}
+	// If there are no pods left, we are done.
+	if len(podList.Items) == 0 {
+		return
+	}
+	// Watch from the resource version of the list and wait for all pods to be deleted
+	// before proceeding with the Recreate strategy.
+	options.ResourceVersion = podList.ResourceVersion
+	w, err := s.podClient.Pods(from.Namespace).Watch(options)
+	if err != nil {
+		fmt.Fprintf(s.out, "--> Watch could not be established: %v\nNew pods may be scaled up before old pods terminate\n", err)
+		return
+	}
+	defer w.Stop()
+	// Observe as many deletions as the remaining pods and then return.
+	deletionsNeeded := len(podList.Items)
+	condition := func(event watch.Event) (bool, error) {
+		if event.Type == watch.Deleted {
+			deletionsNeeded--
+		}
+		return deletionsNeeded == 0, nil
+	}
+	// TODO: Timeout should be timeout - (time.Now - deployerPodStartTime)
+	if _, err = watch.Until(timeout, w, condition); err != nil && err != wait.ErrWaitTimeout {
+		fmt.Fprintf(s.out, "--> Watch failed: %v\nNew pods may be scaled up before old pods terminate\n", err)
+	}
+	return
 }

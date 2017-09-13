@@ -3,7 +3,7 @@
 # Targets (see each target for more information):
 #   all: Build code.
 #   build: Build code.
-#   check: Run unit tests.
+#   check: Run verify, build, unit tests and cmd tests.
 #   test: Run all tests.
 #   run: Run all-in-one server
 #   clean: Clean up.
@@ -19,6 +19,10 @@ export OS_OUTPUT_GOPATH
 # May be used to set additional arguments passed to the image build commands for
 # mounting secrets specific to a build environment.
 export OS_BUILD_IMAGE_ARGS
+
+# Tests run using `make` are most often run by the CI system, so we are OK to
+# assume the user wants jUnit output and will turn it off if they don't.
+JUNIT_REPORT ?= true
 
 # Build code.
 #
@@ -41,10 +45,20 @@ all build:
 #
 # Example:
 #   make build-tests
-build-tests:
-	hack/build-go.sh test/extended/extended.test
-	hack/build-go.sh test/integration/integration.test -tags='integration docker'
+build-tests: build-extended-test build-integration-test build-router-e2e-test
 .PHONY: build-tests
+
+build-extended-test:
+	hack/build-go.sh test/extended/extended.test
+.PHONY: build-extended-test
+
+build-integration-test: build-router-e2e-test
+	hack/build-go.sh test/integration/integration.test
+.PHONY: build-integration-test
+
+build-router-e2e-test:
+	hack/build-go.sh test/end-to-end/end-to-end.test
+.PHONY: build-router-e2e-test
 
 # Run core verification and all self contained tests.
 #
@@ -57,23 +71,36 @@ check: | build verify
 
 # Verify code conventions are properly setup.
 #
+# TODO add verifying listers - we can't do it yet because there's an issue with the generated
+# expansion file being incorrect.
+#
 # Example:
 #   make verify
 verify: build
-	# build-tests is disabled until we can determine why memory usage is so high
-	hack/verify-gofmt.sh
-	hack/verify-govet.sh
-	hack/verify-generated-bootstrap-bindata.sh
-	hack/verify-generated-deep-copies.sh
-	hack/verify-generated-conversions.sh
-	hack/verify-generated-clientsets.sh
-	hack/verify-generated-completions.sh
-	hack/verify-generated-docs.sh
-	hack/verify-cli-conventions.sh
-	PROTO_OPTIONAL=1 hack/verify-generated-protobuf.sh
-	hack/verify-generated-swagger-descriptions.sh
-	hack/verify-generated-swagger-spec.sh
+	# build-tests task has been disabled until we can determine why memory usage is so high
+	{ \
+	hack/verify-gofmt.sh ||r=1;\
+	hack/verify-govet.sh ||r=1;\
+	hack/verify-imports.sh ||r=1;\
+	hack/verify-generated-bindata.sh ||r=1;\
+	hack/verify-generated-deep-copies.sh ||r=1;\
+	hack/verify-generated-conversions.sh ||r=1;\
+	hack/verify-generated-clientsets.sh ||r=1;\
+	hack/verify-generated-defaulters.sh ||r=1;\
+	hack/verify-generated-listers.sh ||r=1;\
+	hack/verify-generated-informers.sh ||r=1;\
+	hack/verify-generated-openapi.sh ||r=1;\
+	hack/verify-generated-protobuf.sh ||r=1;\
+	hack/verify-generated-completions.sh ||r=1;\
+	hack/verify-generated-docs.sh ||r=1;\
+	hack/verify-cli-conventions.sh ||r=1;\
+	hack/verify-generated-json-codecs.sh ||r=1; \
+	hack/verify-generated-swagger-descriptions.sh ||r=1;\
+	hack/verify-generated-swagger-spec.sh ||r=1;\
+	exit $$r ;\
+	}
 .PHONY: verify
+
 
 # Verify commit comments.
 #
@@ -87,17 +114,44 @@ verify-commits:
 #
 # Example:
 #   make update
-update: build
-	hack/update-generated-bootstrap-bindata.sh
+update:
+	hack/update-generated-bindata.sh
 	hack/update-generated-deep-copies.sh
 	hack/update-generated-conversions.sh
 	hack/update-generated-clientsets.sh
+	hack/update-generated-defaulters.sh
+	hack/update-generated-listers.sh
+	hack/update-generated-informers.sh
+	hack/update-generated-openapi.sh
+	hack/update-generated-protobuf.sh
+	$(MAKE) build
 	hack/update-generated-completions.sh
 	hack/update-generated-docs.sh
-	PROTO_OPTIONAL=1 hack/update-generated-protobuf.sh
 	hack/update-generated-swagger-descriptions.sh
 	hack/update-generated-swagger-spec.sh
 .PHONY: update
+
+# Update all generated artifacts for the API
+#
+# Example:
+#   make update-api
+update-api:
+	hack/update-generated-deep-copies.sh
+	hack/update-generated-conversions.sh
+	hack/update-generated-defaulters.sh
+	hack/update-generated-swagger-descriptions.sh
+	hack/update-generated-protobuf.sh
+	hack/update-generated-openapi.sh
+	$(MAKE) build
+	hack/update-generated-swagger-spec.sh
+.PHONY: update-api
+
+# Build and run the complete test-suite.
+#
+# Example:
+#   make test
+test: test-tools test-integration test-end-to-end
+.PHONY: test
 
 # Run unit tests.
 #
@@ -121,7 +175,7 @@ test-unit:
 # Example:
 #   make test-integration
 test-integration:
-	KUBE_COVER=" " KUBE_RACE=" " hack/test-integration.sh
+	hack/test-integration.sh
 .PHONY: test-integration
 
 # Run command tests. Uses whatever binaries are currently built.
@@ -129,6 +183,7 @@ test-integration:
 # Example:
 #   make test-cmd
 test-cmd: build
+	hack/test-util.sh
 	hack/test-cmd.sh
 .PHONY: test-cmd
 
@@ -136,8 +191,8 @@ test-cmd: build
 #
 # Example:
 #   make test-end-to-end
-test-end-to-end: build
-	hack/env hack/verify-generated-protobuf.sh # Test the protobuf serializations when we know Docker is available
+test-end-to-end:
+	COVERAGE_SPEC=' ' DETECT_RACES='false' TIMEOUT='10m' hack/test-go.sh ./test/end-to-end
 	hack/test-end-to-end.sh
 .PHONY: test-end-to-end
 
@@ -149,31 +204,29 @@ test-tools:
 	hack/test-tools.sh
 .PHONY: test-tools
 
-# Run assets tests.
+# Run extended tests.
+#
+# Args:
+#   SUITE: Which Bash entrypoint under test/extended/ to use. Don't include the
+#          ending `.sh`. Ex: `core`.
+#   FOCUS: Literal string to pass to `--ginkgo.focus=`
+# The FOCUS env variable is handled by the respective suite scripts.
 #
 # Example:
-#   make test-assets
-test-assets:
-ifeq ($(TEST_ASSETS),true)
-	hack/test-assets.sh
-endif
-.PHONY: test-assets
-
-# Build and run the complete test-suite.
-#
-# Example:
-#   make test
-test: check
-	$(MAKE) test-tools test-integration test-assets -o build
-	$(MAKE) test-end-to-end -o build
-.PHONY: test
+#   make test-extended SUITE=core
+#   make test-extended SUITE=conformance FOCUS=pods
+# 
+SUITE ?= conformance
+test-extended:
+	test/extended/$(SUITE).sh
+.PHONY: test-extended
 
 # Run All-in-one OpenShift server.
 #
 # Example:
 #   make run
-run: export OS_OUTPUT_BINPATH=$(shell bash -c 'source hack/common.sh; echo $${OS_OUTPUT_BINPATH}')
-run: export PLATFORM=$(shell bash -c 'source hack/common.sh; os::build::host_platform')
+run: export OS_OUTPUT_BINPATH=$(shell bash -c 'source hack/lib/init.sh; echo $${OS_OUTPUT_BINPATH}')
+run: export PLATFORM=$(shell bash -c 'source hack/lib/init.sh; os::build::host_platform')
 run: build
 	$(OS_OUTPUT_BINPATH)/$(PLATFORM)/openshift start
 .PHONY: run
@@ -186,51 +239,26 @@ clean:
 	rm -rf $(OUT_DIR)
 .PHONY: clean
 
+# Build an official release of OpenShift for all platforms and the images that depend on it.
+#
+# Example:
+#   make release
+official-release: build-images build-cross
+.PHONY: official-release
+
 # Build a release of OpenShift for linux/amd64 and the images that depend on it.
 #
 # Example:
 #   make release
-release: clean
-	OS_ONLY_BUILD_PLATFORMS="linux/amd64" hack/build-release.sh
-	hack/build-images.sh
+release: build-images
 	hack/extract-release.sh
 .PHONY: release
-
-# Build only the release binaries for OpenShift
-#
-# Example:
-#   make release-binaries
-release-binaries: clean
-	hack/build-release.sh
-	hack/extract-release.sh
-.PHONY: release-binaries
-
-# Release the integrated components for OpenShift, origin, logging, and metrics.
-# The current tag in the Origin release (the tag that points to HEAD) is used to
-# clone and build each component. Components must have a hack/release.sh script
-# which must accept env var OS_TAG as the tag to build. Each component should push
-# its own images. See hack/release.sh and hack/push-release.sh for an example of
-# the appropriate behavior.
-#
-# Prerequisites:
-# * you must be logged into the remote registry with the appropriate
-#   credentials to push.
-# * all repositories must have a Git tag equal to the current repositories tag of
-#   HEAD
-#
-# TODO: consider making hack/release.sh be a make target (make official-release).
-#
-# Example:
-#   make release-components
-release-components: clean
-	hack/release-components.sh
-.PHONY: release-components
 
 # Build the cross compiled release binaries
 #
 # Example:
 #   make build-cross
-build-cross: clean
+build-cross:
 	hack/build-cross.sh
 .PHONY: build-cross
 
@@ -245,36 +273,32 @@ install-travis:
 # Build RPMs only for the Linux AMD64 target
 #
 # Args:
-#   BUILD_TESTS: whether or not to build a test RPM, off by default
 #
 # Example:
 #   make build-rpms
 build-rpms:
-	BUILD_TESTS=$(BUILD_TESTS) OS_ONLY_BUILD_PLATFORMS='linux/amd64' hack/build-rpm-release.sh
+	OS_ONLY_BUILD_PLATFORMS='linux/amd64' hack/build-rpm-release.sh
 .PHONY: build-rpms
 
 # Build RPMs for all architectures
 #
 # Args:
-#   BUILD_TESTS: whether or not to build a test RPM, off by default
 #
 # Example:
 #   make build-rpms-redistributable
 build-rpms-redistributable:
-	BUILD_TESTS=$(BUILD_TESTS) hack/build-rpm-release.sh
+	hack/build-rpm-release.sh
 .PHONY: build-rpms-redistributable
 
-# Build a release of OpenShift using tito for linux/amd64 and the images that depend on it.
-#
+# Build images from the official RPMs
+# 
 # Args:
-#   BUILD_TESTS: whether or not to build a test RPM, off by default
 #
 # Example:
-#   make release-rpms BUILD_TESTS=1
-release-rpms: clean build-rpms
+#   make build-images
+build-images: build-rpms
 	hack/build-images.sh
-	hack/extract-release.sh
-.PHONY: release
+.PHONY: build-images
 
 # Vendor the Origin Web Console
 #

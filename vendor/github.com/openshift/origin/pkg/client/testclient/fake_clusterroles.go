@@ -1,10 +1,11 @@
 package testclient
 
 import (
-	kapi "k8s.io/kubernetes/pkg/api"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	clientgotesting "k8s.io/client-go/testing"
 
-	authorizationapi "github.com/openshift/origin/pkg/authorization/api"
+	authorizationapi "github.com/openshift/origin/pkg/authorization/apis/authorization"
 )
 
 // FakeClusterRoles implements ClusterRoleInterface. Meant to be embedded into a struct to get a default
@@ -13,8 +14,11 @@ type FakeClusterRoles struct {
 	Fake *Fake
 }
 
-func (c *FakeClusterRoles) Get(name string) (*authorizationapi.ClusterRole, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewRootGetAction("clusterroles", name), &authorizationapi.ClusterRole{})
+var clusterRolesResource = schema.GroupVersionResource{Group: "", Version: "", Resource: "clusterroles"}
+var clusterRolesKind = schema.GroupVersionKind{Group: "", Version: "", Kind: "ClusterRoles"}
+
+func (c *FakeClusterRoles) Get(name string, options metav1.GetOptions) (*authorizationapi.ClusterRole, error) {
+	obj, err := c.Fake.Invokes(clientgotesting.NewRootGetAction(clusterRolesResource, name), &authorizationapi.ClusterRole{})
 	if obj == nil {
 		return nil, err
 	}
@@ -22,8 +26,8 @@ func (c *FakeClusterRoles) Get(name string) (*authorizationapi.ClusterRole, erro
 	return obj.(*authorizationapi.ClusterRole), err
 }
 
-func (c *FakeClusterRoles) List(opts kapi.ListOptions) (*authorizationapi.ClusterRoleList, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewRootListAction("clusterroles", opts), &authorizationapi.ClusterRoleList{})
+func (c *FakeClusterRoles) List(opts metav1.ListOptions) (*authorizationapi.ClusterRoleList, error) {
+	obj, err := c.Fake.Invokes(clientgotesting.NewRootListAction(clusterRolesResource, clusterRolesKind, opts), &authorizationapi.ClusterRoleList{})
 	if obj == nil {
 		return nil, err
 	}
@@ -32,7 +36,7 @@ func (c *FakeClusterRoles) List(opts kapi.ListOptions) (*authorizationapi.Cluste
 }
 
 func (c *FakeClusterRoles) Create(inObj *authorizationapi.ClusterRole) (*authorizationapi.ClusterRole, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewRootCreateAction("clusterroles", inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewRootCreateAction(clusterRolesResource, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -41,7 +45,7 @@ func (c *FakeClusterRoles) Create(inObj *authorizationapi.ClusterRole) (*authori
 }
 
 func (c *FakeClusterRoles) Update(inObj *authorizationapi.ClusterRole) (*authorizationapi.ClusterRole, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewRootUpdateAction("clusterroles", inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewRootUpdateAction(clusterRolesResource, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -50,6 +54,6 @@ func (c *FakeClusterRoles) Update(inObj *authorizationapi.ClusterRole) (*authori
 }
 
 func (c *FakeClusterRoles) Delete(name string) error {
-	_, err := c.Fake.Invokes(ktestclient.NewRootDeleteAction("clusterroles", name), &authorizationapi.ClusterRole{})
+	_, err := c.Fake.Invokes(clientgotesting.NewRootDeleteAction(clusterRolesResource, name), &authorizationapi.ClusterRole{})
 	return err
 }

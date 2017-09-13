@@ -7,6 +7,8 @@ import (
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
 
+	e2e "k8s.io/kubernetes/test/e2e/framework"
+
 	exutil "github.com/openshift/origin/test/extended/util"
 )
 
@@ -31,7 +33,7 @@ var _ = g.Describe("[image_ecosystem][php][Slow] hot deploy for openshift php im
 			o.Expect(err).NotTo(o.HaveOccurred())
 
 			g.By("waiting for build to finish")
-			err = exutil.WaitForABuild(oc.REST().Builds(oc.Namespace()), dcName, exutil.CheckBuildSuccessFn, exutil.CheckBuildFailedFn)
+			err = exutil.WaitForABuild(oc.Client().Builds(oc.Namespace()), dcName, nil, nil, nil)
 			if err != nil {
 				exutil.DumpBuildLogs("cakephp-mysql-example", oc)
 			}
@@ -39,15 +41,15 @@ var _ = g.Describe("[image_ecosystem][php][Slow] hot deploy for openshift php im
 
 			// oc.KubeFramework().WaitForAnEndpoint currently will wait forever;  for now, prefacing with our WaitForADeploymentToComplete,
 			// which does have a timeout, since in most cases a failure in the service coming up stems from a failed deployment
-			err = exutil.WaitForADeploymentToComplete(oc.KubeREST().ReplicationControllers(oc.Namespace()), "cakephp-mysql-example", oc)
+			err = exutil.WaitForDeploymentConfig(oc.KubeClient(), oc.Client(), oc.Namespace(), "cakephp-mysql-example", 1, oc)
 			o.Expect(err).NotTo(o.HaveOccurred())
 
 			g.By("waiting for endpoint")
-			err = oc.KubeFramework().WaitForAnEndpoint("cakephp-mysql-example")
+			err = e2e.WaitForEndpoint(oc.KubeFramework().ClientSet, oc.Namespace(), "cakephp-mysql-example")
 			o.Expect(err).NotTo(o.HaveOccurred())
 
 			assertPageCountIs := func(i int) {
-				_, err := exutil.WaitForPods(oc.KubeREST().Pods(oc.Namespace()), dcLabel, exutil.CheckPodIsRunningFn, 1, 2*time.Minute)
+				_, err := exutil.WaitForPods(oc.KubeClient().Core().Pods(oc.Namespace()), dcLabel, exutil.CheckPodIsRunningFn, 1, 2*time.Minute)
 				o.Expect(err).NotTo(o.HaveOccurred())
 
 				result, err := CheckPageContains(oc, "cakephp-mysql-example", "", pageCountFn(i))
@@ -61,7 +63,8 @@ var _ = g.Describe("[image_ecosystem][php][Slow] hot deploy for openshift php im
 			assertPageCountIs(2)
 
 			g.By("modifying the source code with disabled hot deploy")
-			RunInPodContainer(oc, dcLabel, modifyCommand)
+			err = RunInPodContainer(oc, dcLabel, modifyCommand)
+			o.Expect(err).NotTo(o.HaveOccurred())
 			g.By("checking page count after modifying the source code")
 			assertPageCountIs(1337)
 		})

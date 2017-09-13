@@ -2,20 +2,24 @@ package builder
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/builder/dockerfile/parser"
 	"github.com/fsouza/go-dockerclient"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
 
-	"github.com/openshift/origin/pkg/build/api"
-	"github.com/openshift/origin/pkg/generate/git"
-	"github.com/openshift/origin/pkg/util/docker/dockerfile"
 	"github.com/openshift/source-to-image/pkg/tar"
+	s2ifs "github.com/openshift/source-to-image/pkg/util/fs"
+
+	buildapi "github.com/openshift/origin/pkg/build/apis/build"
+	"github.com/openshift/origin/pkg/build/util/dockerfile"
+	"github.com/openshift/origin/pkg/client/testclient"
+	"github.com/openshift/origin/pkg/generate/git"
 )
 
 func TestInsertEnvAfterFrom(t *testing.T) {
@@ -66,12 +70,12 @@ ENV "PATH"="/bin" "GOPATH"="/go" "PATH"="/go/bin:$PATH"
 RUN echo "hello world"`},
 	}
 	for name, test := range tests {
-		got, err := parser.Parse(strings.NewReader(test.original))
+		got, err := dockerfile.Parse(strings.NewReader(test.original))
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		want, err := parser.Parse(strings.NewReader(test.want))
+		want, err := dockerfile.Parse(strings.NewReader(test.want))
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
@@ -118,12 +122,12 @@ RUN echo "hello world"
 		},
 	}
 	for i, test := range tests {
-		got, err := parser.Parse(strings.NewReader(test.original))
+		got, err := dockerfile.Parse(strings.NewReader(test.original))
 		if err != nil {
 			t.Errorf("test[%d]: %v", i, err)
 			continue
 		}
-		want, err := parser.Parse(strings.NewReader(test.want))
+		want, err := dockerfile.Parse(strings.NewReader(test.want))
 		if err != nil {
 			t.Errorf("test[%d]: %v", i, err)
 			continue
@@ -136,29 +140,29 @@ RUN echo "hello world"
 	}
 }
 
-// TestDockerfilePath validates that we can use a Dockefile with a custom name, and in a sub-directory
+// TestDockerfilePath validates that we can use a Dockerfile with a custom name, and in a sub-directory
 func TestDockerfilePath(t *testing.T) {
 	tests := []struct {
 		contextDir     string
 		dockerfilePath string
-		dockerStrategy *api.DockerBuildStrategy
+		dockerStrategy *buildapi.DockerBuildStrategy
 	}{
 		// default Dockerfile path
 		{
 			dockerfilePath: "Dockerfile",
-			dockerStrategy: &api.DockerBuildStrategy{},
+			dockerStrategy: &buildapi.DockerBuildStrategy{},
 		},
 		// custom Dockerfile path in the root context
 		{
 			dockerfilePath: "mydockerfile",
-			dockerStrategy: &api.DockerBuildStrategy{
+			dockerStrategy: &buildapi.DockerBuildStrategy{
 				DockerfilePath: "mydockerfile",
 			},
 		},
 		// custom Dockerfile path in a sub directory
 		{
 			dockerfilePath: "dockerfiles/mydockerfile",
-			dockerStrategy: &api.DockerBuildStrategy{
+			dockerStrategy: &buildapi.DockerBuildStrategy{
 				DockerfilePath: "dockerfiles/mydockerfile",
 			},
 		},
@@ -167,10 +171,28 @@ func TestDockerfilePath(t *testing.T) {
 		{
 			contextDir:     "somedir",
 			dockerfilePath: "dockerfiles/mydockerfile",
-			dockerStrategy: &api.DockerBuildStrategy{
+			dockerStrategy: &buildapi.DockerBuildStrategy{
 				DockerfilePath: "dockerfiles/mydockerfile",
 			},
 		},
+	}
+
+	from := "FROM openshift/origin-base"
+	expected := []string{
+		from,
+		// expected env variables
+		"\"OPENSHIFT_BUILD_NAME\"=\"name\"",
+		"\"OPENSHIFT_BUILD_NAMESPACE\"=\"namespace\"",
+		"\"OPENSHIFT_BUILD_SOURCE\"=\"http://github.com/openshift/origin.git\"",
+		"\"OPENSHIFT_BUILD_COMMIT\"=\"commitid\"",
+		// expected labels
+		"\"io.openshift.build.commit.author\"=\"test user \\u003ctest@email.com\\u003e\"",
+		"\"io.openshift.build.commit.date\"=\"date\"",
+		"\"io.openshift.build.commit.id\"=\"commitid\"",
+		"\"io.openshift.build.commit.ref\"=\"ref\"",
+		"\"io.openshift.build.commit.message\"=\"message\"",
+		"\"io.openshift.build.name\"=\"name\"",
+		"\"io.openshift.build.namespace\"=\"namespace\"",
 	}
 
 	for _, test := range tests {
@@ -179,30 +201,35 @@ func TestDockerfilePath(t *testing.T) {
 			t.Errorf("failed to create tmpdir: %v", err)
 			continue
 		}
+		defer func() {
+			if err := os.RemoveAll(buildDir); err != nil {
+				t.Fatal(err)
+			}
+		}()
+
 		absoluteDockerfilePath := filepath.Join(buildDir, test.contextDir, test.dockerfilePath)
-		dockerfileContent := "FROM openshift/origin-base"
 		if err = os.MkdirAll(filepath.Dir(absoluteDockerfilePath), os.FileMode(0750)); err != nil {
 			t.Errorf("failed to create directory %s: %v", filepath.Dir(absoluteDockerfilePath), err)
 			continue
 		}
-		if err = ioutil.WriteFile(absoluteDockerfilePath, []byte(dockerfileContent), os.FileMode(0644)); err != nil {
+		if err = ioutil.WriteFile(absoluteDockerfilePath, []byte(from), os.FileMode(0644)); err != nil {
 			t.Errorf("failed to write dockerfile to %s: %v", absoluteDockerfilePath, err)
 			continue
 		}
 
-		build := &api.Build{
-			Spec: api.BuildSpec{
-				CommonSpec: api.CommonSpec{
-					Source: api.BuildSource{
-						Git: &api.GitBuildSource{
+		build := &buildapi.Build{
+			Spec: buildapi.BuildSpec{
+				CommonSpec: buildapi.CommonSpec{
+					Source: buildapi.BuildSource{
+						Git: &buildapi.GitBuildSource{
 							URI: "http://github.com/openshift/origin.git",
 						},
 						ContextDir: test.contextDir,
 					},
-					Strategy: api.BuildStrategy{
+					Strategy: buildapi.BuildStrategy{
 						DockerStrategy: test.dockerStrategy,
 					},
-					Output: api.BuildOutput{
+					Output: buildapi.BuildOutput{
 						To: &kapi.ObjectReference{
 							Kind: "DockerImage",
 							Name: "test/test-result:latest",
@@ -211,7 +238,16 @@ func TestDockerfilePath(t *testing.T) {
 				},
 			},
 		}
+		build.Name = "name"
+		build.Namespace = "namespace"
 
+		sourceInfo := &git.SourceInfo{}
+		sourceInfo.AuthorName = "test user"
+		sourceInfo.AuthorEmail = "test@email.com"
+		sourceInfo.Date = "date"
+		sourceInfo.CommitID = "commitid"
+		sourceInfo.Ref = "ref"
+		sourceInfo.Message = "message"
 		dockerClient := &FakeDocker{
 			buildImageFunc: func(opts docker.BuildImageOptions) error {
 				if opts.Dockerfile != test.dockerfilePath {
@@ -224,13 +260,12 @@ func TestDockerfilePath(t *testing.T) {
 		dockerBuilder := &DockerBuilder{
 			dockerClient: dockerClient,
 			build:        build,
-			gitClient:    git.NewRepository(),
-			tar:          tar.New(),
+			tar:          tar.New(s2ifs.NewFileSystem()),
 		}
 
 		// this will validate that the Dockerfile is readable
 		// and append some labels to the Dockerfile
-		if err = dockerBuilder.addBuildParameters(buildDir); err != nil {
+		if err = addBuildParameters(buildDir, build, sourceInfo); err != nil {
 			t.Errorf("failed to add build parameters: %v", err)
 			continue
 		}
@@ -241,28 +276,35 @@ func TestDockerfilePath(t *testing.T) {
 			t.Errorf("failed to read dockerfile %s: %v", absoluteDockerfilePath, err)
 			continue
 		}
-		if !strings.Contains(string(dockerfileData), dockerfileContent) {
-			t.Errorf("Updated Dockerfile content does not contains the original Dockerfile content.\n\nOriginal content:\n%s\n\nUpdated content:\n%s\n", dockerfileContent, string(dockerfileData))
-			continue
+		for _, value := range expected {
+			if !strings.Contains(string(dockerfileData), value) {
+				t.Errorf("Updated Dockerfile content does not contain expected value:\n%s\n\nUpdated content:\n%s\n", value, string(dockerfileData))
+
+			}
 		}
 
 		// check that the docker client is called with the right Dockerfile parameter
-		if err = dockerBuilder.dockerBuild(buildDir, "", []api.SecretBuildSource{}); err != nil {
+		if err = dockerBuilder.dockerBuild(buildDir, "", []buildapi.SecretBuildSource{}); err != nil {
 			t.Errorf("failed to build: %v", err)
 			continue
 		}
+		os.RemoveAll(buildDir)
 	}
 }
 
 func TestEmptySource(t *testing.T) {
-	build := &api.Build{
-		Spec: api.BuildSpec{
-			CommonSpec: api.CommonSpec{
-				Source: api.BuildSource{},
-				Strategy: api.BuildStrategy{
-					DockerStrategy: &api.DockerBuildStrategy{},
+	build := &buildapi.Build{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "buildid",
+			Namespace: "default",
+		},
+		Spec: buildapi.BuildSpec{
+			CommonSpec: buildapi.CommonSpec{
+				Source: buildapi.BuildSource{},
+				Strategy: buildapi.BuildStrategy{
+					DockerStrategy: &buildapi.DockerBuildStrategy{},
 				},
-				Output: api.BuildOutput{
+				Output: buildapi.BuildOutput{
 					To: &kapi.ObjectReference{
 						Kind: "DockerImage",
 						Name: "test/test-result:latest",
@@ -272,8 +314,11 @@ func TestEmptySource(t *testing.T) {
 		},
 	}
 
+	client := testclient.Fake{}
+
 	dockerBuilder := &DockerBuilder{
-		build: build,
+		client: client.Builds(""),
+		build:  build,
 	}
 
 	if err := dockerBuilder.Build(); err == nil {
@@ -284,6 +329,80 @@ func TestEmptySource(t *testing.T) {
 		}
 	}
 }
+
+// We should not be able to try to pull from scratch
+func TestDockerfileFromScratch(t *testing.T) {
+	dockerFile := `FROM scratch
+USER 1001`
+
+	dockerClient := &FakeDocker{
+		buildImageFunc: func(opts docker.BuildImageOptions) error {
+			return nil
+		},
+		pullImageFunc: func(opts docker.PullImageOptions, auth docker.AuthConfiguration) error {
+			if opts.Repository == "scratch" && opts.Registry == "" {
+				return fmt.Errorf("cannot pull scratch")
+			}
+			return nil
+		},
+	}
+
+	build := &buildapi.Build{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "buildid",
+			Namespace: "default",
+		},
+		Spec: buildapi.BuildSpec{
+			CommonSpec: buildapi.CommonSpec{
+				Source: buildapi.BuildSource{
+					ContextDir: "",
+					Dockerfile: &dockerFile,
+				},
+				Strategy: buildapi.BuildStrategy{
+					DockerStrategy: &buildapi.DockerBuildStrategy{
+						DockerfilePath: "",
+						From: &kapi.ObjectReference{
+							Kind: "DockerImage",
+							Name: "scratch",
+						},
+					},
+				},
+				Output: buildapi.BuildOutput{
+					To: &kapi.ObjectReference{
+						Kind: "ImageStreamTag",
+						Name: "scratch",
+					},
+				},
+			},
+		},
+	}
+
+	client := testclient.Fake{}
+
+	buildDir, err := ioutil.TempDir("", "dockerfile-path")
+	if err != nil {
+		t.Errorf("failed to create tmpdir: %v", err)
+	}
+
+	dockerBuilder := &DockerBuilder{
+		client:       client.Builds(""),
+		build:        build,
+		dockerClient: dockerClient,
+		tar:          tar.New(s2ifs.NewFileSystem()),
+		inputDir:     buildDir,
+	}
+	if err := ManageDockerfile(buildDir, build); err != nil {
+		t.Errorf("failed to manage the dockerfile: %v", err)
+	}
+	if err := dockerBuilder.Build(); err != nil {
+		if strings.Contains(err.Error(), "cannot pull scratch") {
+			t.Errorf("Docker build should not have attempted to pull from scratch")
+		} else {
+			t.Errorf("Received unexpected error: %v", err)
+		}
+	}
+}
+
 func TestGetDockerfileFrom(t *testing.T) {
 	tests := map[string]struct {
 		dockerfileContent string
@@ -308,12 +427,18 @@ RUN echo "hello world"
 			want: []string{"scratch", "busybox"},
 		},
 	}
+
 	for i, test := range tests {
 		buildDir, err := ioutil.TempDir("", "dockerfile-path")
 		if err != nil {
 			t.Errorf("failed to create tmpdir: %v", err)
 			continue
 		}
+		defer func() {
+			if err := os.RemoveAll(buildDir); err != nil {
+				t.Fatal(err)
+			}
+		}()
 		dockerfilePath := filepath.Join(buildDir, defaultDockerfilePath)
 		dockerfileContent := test.dockerfileContent
 		if err = os.MkdirAll(filepath.Dir(dockerfilePath), os.FileMode(0750)); err != nil {
@@ -337,5 +462,6 @@ RUN echo "hello world"
 				break
 			}
 		}
+		os.RemoveAll(buildDir)
 	}
 }

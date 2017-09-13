@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
+	"time"
 
 	flag "github.com/spf13/pflag"
 
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/storage/names"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
 	osclient "github.com/openshift/origin/pkg/client"
 	osclientcmd "github.com/openshift/origin/pkg/cmd/util/clientcmd"
@@ -26,13 +27,17 @@ const (
 
 // NetworkDiagnostic is a diagnostic that runs a network diagnostic pod and relays the results.
 type NetworkDiagnostic struct {
-	KubeClient          *kclient.Client
+	KubeClient          kclientset.Interface
 	OSClient            *osclient.Client
 	ClientFlags         *flag.FlagSet
 	Level               int
 	Factory             *osclientcmd.Factory
 	PreventModification bool
 	LogDir              string
+	PodImage            string
+	TestPodImage        string
+	TestPodProtocol     string
+	TestPodPort         int
 
 	pluginName    string
 	nodes         []kapi.Node
@@ -93,9 +98,6 @@ func (d *NetworkDiagnostic) Check() types.DiagnosticResult {
 		return d.res
 	}
 
-	if len(d.LogDir) == 0 {
-		d.LogDir = util.NetworkDiagDefaultLogDir
-	}
 	d.runNetworkDiagnostic()
 	return d.res
 }
@@ -124,14 +126,19 @@ func (d *NetworkDiagnostic) runNetworkDiagnostic() {
 		loglevel = 2
 	}
 
+	// Network diagnostics has 2 phases: Testing and Collection phase.
+	// In Testing phase, various network related diagnostics are performed on every node and results are stored on the respective nodes.
+	// In Collection phase, results from each node are moved to the user machine where the CLI cmd is executed.
+
 	// TEST Phase: Run network diagnostic pod on all valid nodes in parallel
-	command := []string{"chroot", util.NetworkDiagContainerMountPath, "openshift", "infra", "network-diagnostic-pod", "-l", strconv.Itoa(loglevel)}
+	command := fmt.Sprintf("openshift infra network-diagnostic-pod -l %d", loglevel)
 	if err := d.runNetworkPod(command); err != nil {
 		d.res.Error("DNet2006", err, err.Error())
 		return
 	}
-	// Wait for network diagnostic pod completion
-	if err := d.waitForNetworkPod(d.nsName1, util.NetworkDiagPodNamePrefix, []kapi.PodPhase{kapi.PodSucceeded, kapi.PodFailed}); err != nil {
+	// Wait for network diagnostic pod completion (timeout: ~3 mins)
+	backoff := wait.Backoff{Steps: 38, Duration: 500 * time.Millisecond, Factor: 1.1}
+	if err := d.waitForNetworkPod(d.nsName1, util.NetworkDiagPodNamePrefix, backoff, []kapi.PodPhase{kapi.PodSucceeded, kapi.PodFailed}); err != nil {
 		d.res.Error("DNet2007", err, err.Error())
 		return
 	}
@@ -143,14 +150,16 @@ func (d *NetworkDiagnostic) runNetworkDiagnostic() {
 	}
 
 	// Collection Phase: Run network diagnostic pod on all valid nodes
-	command = []string{"chroot", util.NetworkDiagContainerMountPath, "sleep", "1000"}
+	// Block the network diagnostic pod on every node so that results can be moved to the user machine.
+	command = "sleep 1000"
 	if err := d.runNetworkPod(command); err != nil {
 		d.res.Error("DNet2009", err, err.Error())
 		return
 	}
 
-	// Wait for network diagnostic pod to start
-	if err := d.waitForNetworkPod(d.nsName1, util.NetworkDiagPodNamePrefix, []kapi.PodPhase{kapi.PodRunning, kapi.PodFailed, kapi.PodSucceeded}); err != nil {
+	// Wait for network diagnostic pod to start (timeout: ~5 mins)
+	backoff = wait.Backoff{Steps: 36, Duration: time.Second, Factor: 1.1}
+	if err := d.waitForNetworkPod(d.nsName1, util.NetworkDiagPodNamePrefix, backoff, []kapi.PodPhase{kapi.PodRunning, kapi.PodFailed, kapi.PodSucceeded}); err != nil {
 		d.res.Error("DNet2010", err, err.Error())
 		// Do not bail out here, collect what ever info is available from all valid nodes
 	}
@@ -165,16 +174,16 @@ func (d *NetworkDiagnostic) runNetworkDiagnostic() {
 	return
 }
 
-func (d *NetworkDiagnostic) runNetworkPod(command []string) error {
+func (d *NetworkDiagnostic) runNetworkPod(command string) error {
 	for _, node := range d.nodes {
-		podName := kapi.SimpleNameGenerator.GenerateName(fmt.Sprintf("%s-", util.NetworkDiagPodNamePrefix))
+		podName := names.SimpleNameGenerator.GenerateName(fmt.Sprintf("%s-", util.NetworkDiagPodNamePrefix))
 
-		pod := GetNetworkDiagnosticsPod(command, podName, node.Name)
-		_, err := d.KubeClient.Pods(d.nsName1).Create(pod)
+		pod := GetNetworkDiagnosticsPod(d.PodImage, command, podName, node.Name)
+		_, err := d.KubeClient.Core().Pods(d.nsName1).Create(pod)
 		if err != nil {
-			return fmt.Errorf("Creating network diagnostic pod %q on node %q with command %q failed: %v", podName, node.Name, strings.Join(command, " "), err)
+			return fmt.Errorf("Creating network diagnostic pod %q on node %q with command %q failed: %v", podName, node.Name, command, err)
 		}
-		d.res.Debug("DNet2013", fmt.Sprintf("Created network diagnostic pod %q on node %q with command: %q", podName, node.Name, strings.Join(command, " ")))
+		d.res.Debug("DNet2013", fmt.Sprintf("Created network diagnostic pod %q on node %q with command: %q", podName, node.Name, command))
 	}
 	return nil
 }

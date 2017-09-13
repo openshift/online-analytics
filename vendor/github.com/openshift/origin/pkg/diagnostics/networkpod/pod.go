@@ -5,15 +5,16 @@ import (
 	"fmt"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	kcontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	kexec "k8s.io/kubernetes/pkg/util/exec"
 
 	osclient "github.com/openshift/origin/pkg/client"
 	"github.com/openshift/origin/pkg/diagnostics/networkpod/util"
 	"github.com/openshift/origin/pkg/diagnostics/types"
-	sdnapi "github.com/openshift/origin/pkg/sdn/api"
+	"github.com/openshift/origin/pkg/sdn"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 
 // CheckPodNetwork is a Diagnostic to check communication between pods in the cluster.
 type CheckPodNetwork struct {
-	KubeClient *kclient.Client
+	KubeClient kclientset.Interface
 	OSClient   *osclient.Client
 
 	vnidMap map[string]uint32
@@ -69,8 +70,8 @@ func (d CheckPodNetwork) Check() types.DiagnosticResult {
 		return d.res
 	}
 
-	if sdnapi.IsOpenShiftMultitenantNetworkPlugin(pluginName) {
-		netnsList, err := d.OSClient.NetNamespaces().List(kapi.ListOptions{})
+	if sdn.IsOpenShiftMultitenantNetworkPlugin(pluginName) {
+		netnsList, err := d.OSClient.NetNamespaces().List(metav1.ListOptions{})
 		if err != nil {
 			d.res.Error("DPodNet1004", err, fmt.Sprintf("Getting all network namespaces failed. Error: %s", err))
 			return d.res

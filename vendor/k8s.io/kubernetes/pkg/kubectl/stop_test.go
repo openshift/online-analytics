@@ -23,16 +23,18 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"k8s.io/apimachinery/pkg/watch"
+	testcore "k8s.io/client-go/testing"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/apis/batch"
 	"k8s.io/kubernetes/pkg/apis/extensions"
-	client "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	deploymentutil "k8s.io/kubernetes/pkg/controller/deployment/util"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/watch"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	coreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
 )
 
 func TestReplicationControllerStop(t *testing.T) {
@@ -47,19 +49,10 @@ func TestReplicationControllerStop(t *testing.T) {
 		{
 			Name: "OnlyOneRC",
 			Objs: []runtime.Object{
-				&api.ReplicationController{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: api.ReplicationControllerSpec{
-						Replicas: 0,
-						Selector: map[string]string{"k1": "v1"}},
-				},
 				&api.ReplicationControllerList{ // LIST
 					Items: []api.ReplicationController{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
@@ -76,19 +69,10 @@ func TestReplicationControllerStop(t *testing.T) {
 		{
 			Name: "NoOverlapping",
 			Objs: []runtime.Object{
-				&api.ReplicationController{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: api.ReplicationControllerSpec{
-						Replicas: 0,
-						Selector: map[string]string{"k1": "v1"}},
-				},
 				&api.ReplicationControllerList{ // LIST
 					Items: []api.ReplicationController{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      "baz",
 								Namespace: ns,
 							},
@@ -97,7 +81,7 @@ func TestReplicationControllerStop(t *testing.T) {
 								Selector: map[string]string{"k3": "v3"}},
 						},
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
@@ -115,19 +99,10 @@ func TestReplicationControllerStop(t *testing.T) {
 			Name: "OverlappingError",
 			Objs: []runtime.Object{
 
-				&api.ReplicationController{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: api.ReplicationControllerSpec{
-						Replicas: 0,
-						Selector: map[string]string{"k1": "v1"}},
-				},
 				&api.ReplicationControllerList{ // LIST
 					Items: []api.ReplicationController{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      "baz",
 								Namespace: ns,
 							},
@@ -136,7 +111,7 @@ func TestReplicationControllerStop(t *testing.T) {
 								Selector: map[string]string{"k1": "v1", "k2": "v2"}},
 						},
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
@@ -155,19 +130,10 @@ func TestReplicationControllerStop(t *testing.T) {
 			Name: "OverlappingButSafeDelete",
 			Objs: []runtime.Object{
 
-				&api.ReplicationController{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: api.ReplicationControllerSpec{
-						Replicas: 0,
-						Selector: map[string]string{"k1": "v1", "k2": "v2"}},
-				},
 				&api.ReplicationControllerList{ // LIST
 					Items: []api.ReplicationController{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      "baz",
 								Namespace: ns,
 							},
@@ -176,7 +142,7 @@ func TestReplicationControllerStop(t *testing.T) {
 								Selector: map[string]string{"k1": "v1", "k2": "v2", "k3": "v3"}},
 						},
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      "zaz",
 								Namespace: ns,
 							},
@@ -185,7 +151,7 @@ func TestReplicationControllerStop(t *testing.T) {
 								Selector: map[string]string{"k1": "v1"}},
 						},
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
@@ -205,19 +171,10 @@ func TestReplicationControllerStop(t *testing.T) {
 			Name: "TwoExactMatchRCs",
 			Objs: []runtime.Object{
 
-				&api.ReplicationController{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: api.ReplicationControllerSpec{
-						Replicas: 0,
-						Selector: map[string]string{"k1": "v1"}},
-				},
 				&api.ReplicationControllerList{ // LIST
 					Items: []api.ReplicationController{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      "zaz",
 								Namespace: ns,
 							},
@@ -226,7 +183,7 @@ func TestReplicationControllerStop(t *testing.T) {
 								Selector: map[string]string{"k1": "v1"}},
 						},
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
@@ -248,15 +205,15 @@ func TestReplicationControllerStop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s unexpected error: %v", test.Name, err)
 		}
-		fake := testclient.NewSimpleFake(test.Objs...)
+		fake := fake.NewSimpleClientset(test.Objs...)
 		fakeWatch := watch.NewFake()
-		fake.PrependWatchReactor("replicationcontrollers", testclient.DefaultWatchReactor(fakeWatch, nil))
+		fake.PrependWatchReactor("replicationcontrollers", testcore.DefaultWatchReactor(fakeWatch, nil))
 
 		go func() {
 			fakeWatch.Add(copiedForWatch)
 		}()
 
-		reaper := ReplicationControllerReaper{fake, time.Millisecond, time.Millisecond}
+		reaper := ReplicationControllerReaper{fake.Core(), time.Millisecond, time.Millisecond}
 		err = reaper.Stop(ns, name, 0, nil)
 		if !reflect.DeepEqual(err, test.StopError) {
 			t.Errorf("%s unexpected error: %v", test.Name, err)
@@ -269,7 +226,7 @@ func TestReplicationControllerStop(t *testing.T) {
 			continue
 		}
 		for i, verb := range test.ExpectedActions {
-			if actions[i].GetResource() != "replicationcontrollers" {
+			if actions[i].GetResource().GroupResource() != api.Resource("replicationcontrollers") {
 				t.Errorf("%s unexpected action: %+v, expected %s-replicationController", test.Name, actions[i], verb)
 			}
 			if actions[i].GetVerb() != verb {
@@ -291,26 +248,16 @@ func TestReplicaSetStop(t *testing.T) {
 		{
 			Name: "OnlyOneRS",
 			Objs: []runtime.Object{
-				&extensions.ReplicaSet{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: extensions.ReplicaSetSpec{
-						Replicas: 0,
-						Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
-					},
-				},
 				&extensions.ReplicaSetList{ // LIST
 					Items: []extensions.ReplicaSet{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
 							Spec: extensions.ReplicaSetSpec{
 								Replicas: 0,
-								Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
+								Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
 							},
 						},
 					},
@@ -322,36 +269,26 @@ func TestReplicaSetStop(t *testing.T) {
 		{
 			Name: "NoOverlapping",
 			Objs: []runtime.Object{
-				&extensions.ReplicaSet{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: extensions.ReplicaSetSpec{
-						Replicas: 0,
-						Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
-					},
-				},
 				&extensions.ReplicaSetList{ // LIST
 					Items: []extensions.ReplicaSet{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      "baz",
 								Namespace: ns,
 							},
 							Spec: extensions.ReplicaSetSpec{
 								Replicas: 0,
-								Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k3": "v3"}},
+								Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"k3": "v3"}},
 							},
 						},
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
 							Spec: extensions.ReplicaSetSpec{
 								Replicas: 0,
-								Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
+								Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
 							},
 						},
 					},
@@ -365,8 +302,8 @@ func TestReplicaSetStop(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		fake := testclient.NewSimpleFake(test.Objs...)
-		reaper := ReplicaSetReaper{fake, time.Millisecond, time.Millisecond}
+		fake := fake.NewSimpleClientset(test.Objs...)
+		reaper := ReplicaSetReaper{fake.Extensions(), time.Millisecond, time.Millisecond}
 		err := reaper.Stop(ns, name, 0, nil)
 		if !reflect.DeepEqual(err, test.StopError) {
 			t.Errorf("%s unexpected error: %v", test.Name, err)
@@ -379,7 +316,7 @@ func TestReplicaSetStop(t *testing.T) {
 			continue
 		}
 		for i, verb := range test.ExpectedActions {
-			if actions[i].GetResource() != "replicasets" {
+			if actions[i].GetResource().GroupResource() != extensions.Resource("replicasets") {
 				t.Errorf("%s unexpected action: %+v, expected %s-replicaSet", test.Name, actions[i], verb)
 			}
 			if actions[i].GetVerb() != verb {
@@ -402,28 +339,16 @@ func TestJobStop(t *testing.T) {
 		{
 			Name: "OnlyOneJob",
 			Objs: []runtime.Object{
-				&batch.Job{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: batch.JobSpec{
-						Parallelism: &zero,
-						Selector: &unversioned.LabelSelector{
-							MatchLabels: map[string]string{"k1": "v1"},
-						},
-					},
-				},
 				&batch.JobList{ // LIST
 					Items: []batch.Job{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
 							Spec: batch.JobSpec{
 								Parallelism: &zero,
-								Selector: &unversioned.LabelSelector{
+								Selector: &metav1.LabelSelector{
 									MatchLabels: map[string]string{"k1": "v1"},
 								},
 							},
@@ -438,28 +363,16 @@ func TestJobStop(t *testing.T) {
 		{
 			Name: "JobWithDeadPods",
 			Objs: []runtime.Object{
-				&batch.Job{ // GET
-					ObjectMeta: api.ObjectMeta{
-						Name:      name,
-						Namespace: ns,
-					},
-					Spec: batch.JobSpec{
-						Parallelism: &zero,
-						Selector: &unversioned.LabelSelector{
-							MatchLabels: map[string]string{"k1": "v1"},
-						},
-					},
-				},
 				&batch.JobList{ // LIST
 					Items: []batch.Job{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
 							},
 							Spec: batch.JobSpec{
 								Parallelism: &zero,
-								Selector: &unversioned.LabelSelector{
+								Selector: &metav1.LabelSelector{
 									MatchLabels: map[string]string{"k1": "v1"},
 								},
 							},
@@ -469,7 +382,7 @@ func TestJobStop(t *testing.T) {
 				&api.PodList{ // LIST
 					Items: []api.Pod{
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      "pod1",
 								Namespace: ns,
 								Labels:    map[string]string{"k1": "v1"},
@@ -485,8 +398,8 @@ func TestJobStop(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		fake := testclient.NewSimpleFake(test.Objs...)
-		reaper := JobReaper{fake, time.Millisecond, time.Millisecond}
+		fake := fake.NewSimpleClientset(test.Objs...)
+		reaper := JobReaper{fake.Batch(), fake.Core(), time.Millisecond, time.Millisecond}
 		err := reaper.Stop(ns, name, 0, nil)
 		if !reflect.DeepEqual(err, test.StopError) {
 			t.Errorf("%s unexpected error: %v", test.Name, err)
@@ -503,7 +416,7 @@ func TestJobStop(t *testing.T) {
 			if actions[i].GetVerb() != action[0] {
 				t.Errorf("%s unexpected verb: %+v, expected %s", test.Name, actions[i], expAction)
 			}
-			if actions[i].GetResource() != action[1] {
+			if actions[i].GetResource().Resource != action[1] {
 				t.Errorf("%s unexpected resource: %+v, expected %s", test.Name, actions[i], expAction)
 			}
 		}
@@ -514,19 +427,20 @@ func TestDeploymentStop(t *testing.T) {
 	name := "foo"
 	ns := "default"
 	deployment := extensions.Deployment{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
+			UID:       uuid.NewUUID(),
 			Namespace: ns,
 		},
 		Spec: extensions.DeploymentSpec{
 			Replicas: 0,
-			Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
 		},
 		Status: extensions.DeploymentStatus{
 			Replicas: 0,
 		},
 	}
-	template := deploymentutil.GetNewReplicaSetTemplate(&deployment)
+	trueVar := true
 	tests := []struct {
 		Name            string
 		Objs            []runtime.Object
@@ -537,13 +451,13 @@ func TestDeploymentStop(t *testing.T) {
 			Name: "SimpleDeployment",
 			Objs: []runtime.Object{
 				&extensions.Deployment{ // GET
-					ObjectMeta: api.ObjectMeta{
+					ObjectMeta: metav1.ObjectMeta{
 						Name:      name,
 						Namespace: ns,
 					},
 					Spec: extensions.DeploymentSpec{
 						Replicas: 0,
-						Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
+						Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
 					},
 					Status: extensions.DeploymentStatus{
 						Replicas: 0,
@@ -560,14 +474,41 @@ func TestDeploymentStop(t *testing.T) {
 				&deployment, // GET
 				&extensions.ReplicaSetList{ // LIST
 					Items: []extensions.ReplicaSet{
+						// ReplicaSet owned by this Deployment.
 						{
-							ObjectMeta: api.ObjectMeta{
+							ObjectMeta: metav1.ObjectMeta{
 								Name:      name,
 								Namespace: ns,
+								Labels:    map[string]string{"k1": "v1"},
+								OwnerReferences: []metav1.OwnerReference{
+									{
+										APIVersion: extensions.SchemeGroupVersion.String(),
+										Kind:       "Deployment",
+										Name:       deployment.Name,
+										UID:        deployment.UID,
+										Controller: &trueVar,
+									},
+								},
 							},
-							Spec: extensions.ReplicaSetSpec{
-								Template: template,
+							Spec: extensions.ReplicaSetSpec{},
+						},
+						// ReplicaSet owned by something else (should be ignored).
+						{
+							ObjectMeta: metav1.ObjectMeta{
+								Name:      "rs2",
+								Namespace: ns,
+								Labels:    map[string]string{"k1": "v1"},
+								OwnerReferences: []metav1.OwnerReference{
+									{
+										APIVersion: extensions.SchemeGroupVersion.String(),
+										Kind:       "Deployment",
+										Name:       "somethingelse",
+										UID:        uuid.NewUUID(),
+										Controller: &trueVar,
+									},
+								},
 							},
+							Spec: extensions.ReplicaSetSpec{},
 						},
 					},
 				},
@@ -581,8 +522,8 @@ func TestDeploymentStop(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		fake := testclient.NewSimpleFake(test.Objs...)
-		reaper := DeploymentReaper{fake, time.Millisecond, time.Millisecond}
+		fake := fake.NewSimpleClientset(test.Objs...)
+		reaper := DeploymentReaper{fake.Extensions(), fake.Extensions(), time.Millisecond, time.Millisecond}
 		err := reaper.Stop(ns, name, 0, nil)
 		if !reflect.DeepEqual(err, test.StopError) {
 			t.Errorf("%s unexpected error: %v", test.Name, err)
@@ -599,7 +540,7 @@ func TestDeploymentStop(t *testing.T) {
 			if actions[i].GetVerb() != action[0] {
 				t.Errorf("%s unexpected verb: %+v, expected %s", test.Name, actions[i], expAction)
 			}
-			if actions[i].GetResource() != action[1] {
+			if actions[i].GetResource().Resource != action[1] {
 				t.Errorf("%s unexpected resource: %+v, expected %s", test.Name, actions[i], expAction)
 			}
 			if len(action) == 3 && actions[i].GetSubresource() != action[2] {
@@ -610,92 +551,109 @@ func TestDeploymentStop(t *testing.T) {
 }
 
 type noSuchPod struct {
-	*testclient.FakePods
+	coreclient.PodInterface
 }
 
-func (c *noSuchPod) Get(name string) (*api.Pod, error) {
+func (c *noSuchPod) Get(name string, options metav1.GetOptions) (*api.Pod, error) {
 	return nil, fmt.Errorf("%s does not exist", name)
 }
 
 type noDeleteService struct {
-	*testclient.FakeServices
+	coreclient.ServiceInterface
 }
 
-func (c *noDeleteService) Delete(service string) error {
+func (c *noDeleteService) Delete(service string, o *metav1.DeleteOptions) error {
 	return fmt.Errorf("I'm afraid I can't do that, Dave")
 }
 
 type reaperFake struct {
-	*testclient.Fake
+	*fake.Clientset
 	noSuchPod, noDeleteService bool
 }
 
-func (c *reaperFake) Pods(namespace string) client.PodInterface {
-	pods := &testclient.FakePods{Fake: c.Fake, Namespace: namespace}
+func (c *reaperFake) Core() coreclient.CoreInterface {
+	return &reaperCoreFake{c.Clientset.Core(), c.noSuchPod, c.noDeleteService}
+}
+
+type reaperCoreFake struct {
+	coreclient.CoreInterface
+	noSuchPod, noDeleteService bool
+}
+
+func (c *reaperCoreFake) Pods(namespace string) coreclient.PodInterface {
+	pods := c.CoreInterface.Pods(namespace)
 	if c.noSuchPod {
 		return &noSuchPod{pods}
 	}
 	return pods
 }
 
-func (c *reaperFake) Services(namespace string) client.ServiceInterface {
-	services := &testclient.FakeServices{Fake: c.Fake, Namespace: namespace}
+func (c *reaperCoreFake) Services(namespace string) coreclient.ServiceInterface {
+	services := c.CoreInterface.Services(namespace)
 	if c.noDeleteService {
 		return &noDeleteService{services}
 	}
 	return services
 }
 
+func pod() *api.Pod {
+	return &api.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceDefault, Name: "foo"}}
+}
+
+func service() *api.Service {
+	return &api.Service{ObjectMeta: metav1.ObjectMeta{Namespace: metav1.NamespaceDefault, Name: "foo"}}
+}
+
 func TestSimpleStop(t *testing.T) {
 	tests := []struct {
 		fake        *reaperFake
-		kind        unversioned.GroupKind
-		actions     []testclient.Action
+		kind        schema.GroupKind
+		actions     []testcore.Action
 		expectError bool
 		test        string
 	}{
 		{
 			fake: &reaperFake{
-				Fake: &testclient.Fake{},
+				Clientset: fake.NewSimpleClientset(pod()),
 			},
 			kind: api.Kind("Pod"),
-			actions: []testclient.Action{
-				testclient.NewGetAction("pods", api.NamespaceDefault, "foo"),
-				testclient.NewDeleteAction("pods", api.NamespaceDefault, "foo"),
+			actions: []testcore.Action{
+				testcore.NewGetAction(api.Resource("pods").WithVersion(""), metav1.NamespaceDefault, "foo"),
+				testcore.NewDeleteAction(api.Resource("pods").WithVersion(""), metav1.NamespaceDefault, "foo"),
 			},
 			expectError: false,
 			test:        "stop pod succeeds",
 		},
 		{
 			fake: &reaperFake{
-				Fake: &testclient.Fake{},
+				Clientset: fake.NewSimpleClientset(service()),
 			},
 			kind: api.Kind("Service"),
-			actions: []testclient.Action{
-				testclient.NewGetAction("services", api.NamespaceDefault, "foo"),
-				testclient.NewDeleteAction("services", api.NamespaceDefault, "foo"),
+			actions: []testcore.Action{
+				testcore.NewGetAction(api.Resource("services").WithVersion(""), metav1.NamespaceDefault, "foo"),
+				testcore.NewDeleteAction(api.Resource("services").WithVersion(""), metav1.NamespaceDefault, "foo"),
 			},
 			expectError: false,
 			test:        "stop service succeeds",
 		},
 		{
 			fake: &reaperFake{
-				Fake:      &testclient.Fake{},
+				Clientset: fake.NewSimpleClientset(),
 				noSuchPod: true,
 			},
 			kind:        api.Kind("Pod"),
-			actions:     []testclient.Action{},
+			actions:     []testcore.Action{},
 			expectError: true,
 			test:        "stop pod fails, no pod",
 		},
 		{
 			fake: &reaperFake{
-				Fake:            &testclient.Fake{},
+				Clientset:       fake.NewSimpleClientset(service()),
 				noDeleteService: true,
 			},
 			kind: api.Kind("Service"),
-			actions: []testclient.Action{
-				testclient.NewGetAction("services", api.NamespaceDefault, "foo"),
+			actions: []testcore.Action{
+				testcore.NewGetAction(api.Resource("services").WithVersion(""), metav1.NamespaceDefault, "foo"),
 			},
 			expectError: true,
 			test:        "stop service fails, can't delete",
@@ -733,43 +691,37 @@ func TestDeploymentNotFoundError(t *testing.T) {
 	name := "foo"
 	ns := "default"
 	deployment := &extensions.Deployment{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
 		},
 		Spec: extensions.DeploymentSpec{
 			Replicas: 0,
-			Selector: &unversioned.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
+			Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"k1": "v1"}},
 		},
 		Status: extensions.DeploymentStatus{
 			Replicas: 0,
 		},
 	}
-	template := deploymentutil.GetNewReplicaSetTemplate(deployment)
 
-	fake := &testclient.Fake{}
-	fake.AddReactor("get", "deployments", func(action testclient.Action) (handled bool, ret runtime.Object, err error) {
-		return true, deployment, nil
-	})
-	fake.AddReactor("list", "replicasets", func(action testclient.Action) (handled bool, ret runtime.Object, err error) {
-		list := &extensions.ReplicaSetList{Items: []extensions.ReplicaSet{
+	fake := fake.NewSimpleClientset(
+		deployment,
+		&extensions.ReplicaSetList{Items: []extensions.ReplicaSet{
 			{
-				ObjectMeta: api.ObjectMeta{
+				ObjectMeta: metav1.ObjectMeta{
 					Name:      name,
 					Namespace: ns,
 				},
-				Spec: extensions.ReplicaSetSpec{
-					Template: template,
-				},
+				Spec: extensions.ReplicaSetSpec{},
 			},
-		}}
-		return true, list, nil
-	})
-	fake.AddReactor("get", "replicasets", func(action testclient.Action) (handled bool, ret runtime.Object, err error) {
+		},
+		},
+	)
+	fake.AddReactor("get", "replicasets", func(action testcore.Action) (handled bool, ret runtime.Object, err error) {
 		return true, nil, ScaleError{ActualError: errors.NewNotFound(api.Resource("replicaset"), "doesn't-matter")}
 	})
 
-	reaper := DeploymentReaper{fake, time.Millisecond, time.Millisecond}
+	reaper := DeploymentReaper{fake.Extensions(), fake.Extensions(), time.Millisecond, time.Millisecond}
 	if err := reaper.Stop(ns, name, 0, nil); err != nil {
 		t.Fatalf("unexpected error: %#v", err)
 	}

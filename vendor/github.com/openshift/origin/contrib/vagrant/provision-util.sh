@@ -14,8 +14,8 @@ os::provision::build-origin() {
 
   # This optimization is intended for devcluster use so hard-coding the
   # arch in the path should be ok.
-  if [[ -f "$(os::build::find-binary oc "${origin_root}")" &&
-          "${skip_build}" = "true" ]]; then
+  if OS_ROOT="${origin_root}" os::util::find::built_binary oc >/dev/null 2>&1 &&
+          [[ "${skip_build}" = "true" ]]; then
     echo "WARNING: Skipping openshift build due to OPENSHIFT_SKIP_BUILD=true"
   else
     echo "Building openshift"
@@ -187,10 +187,12 @@ os::provision::get-network-plugin() {
 
   local subnet_plugin="redhat/openshift-ovs-subnet"
   local multitenant_plugin="redhat/openshift-ovs-multitenant"
+  local networkpolicy_plugin="redhat/openshift-ovs-networkpolicy"
   local default_plugin="${subnet_plugin}"
 
   if [[ "${plugin}" != "${subnet_plugin}" &&
           "${plugin}" != "${multitenant_plugin}" &&
+          "${plugin}" != "${networkpolicy_plugin}" &&
           "${plugin}" != "cni" ]]; then
     # Disable output when being called from the dind management script
     # since it may be doing something other than launching a cluster.
@@ -378,13 +380,13 @@ os::provision::disable-node() {
   local config="$(os::provision::get-admin-config "${config_root}")"
 
   local msg="${node_name} to register with the master"
-  local oc="$(os::build::find-binary oc "${origin_root}")"
+  local oc="$(OS_ROOT="${origin_root}" os::util::find::built_binary oc)"
   local condition="os::provision::is-node-registered ${oc} ${config} \
       ${node_name}"
   os::provision::wait-for-condition "${msg}" "${condition}"
 
   echo "Disabling scheduling for node ${node_name}"
-  "$(os::build::find-binary osadm "${origin_root}")" --config="${config}" \
+  "$(OS_ROOT="${origin_root}" os::util::find::built_binary osadm)" --config="${config}" \
       manage-node "${node_name}" --schedulable=false > /dev/null
 }
 
@@ -432,4 +434,13 @@ os::provision::enable-overlay-storage() {
   fi
 
   echo "${msg}"
+}
+
+os::build::get-bin-output-path() {
+  local os_root="${1:-}"
+
+  if [[ -n "${os_root}" ]]; then
+    os_root="${os_root}/"
+  fi
+  echo ${os_root}_output/local/bin/$(os::build::host_platform)
 }

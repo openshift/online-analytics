@@ -269,6 +269,10 @@ type NetworkStats struct {
 	Tcp TcpStat `json:"tcp"`
 	// TCP6 connection stats (Established, Listen...)
 	Tcp6 TcpStat `json:"tcp6"`
+	// UDP connection stats
+	Udp v1.UdpStat `json:"udp"`
+	// UDP6 connection stats
+	Udp6 v1.UdpStat `json:"udp6"`
 }
 
 // Instantaneous CPU stats
@@ -301,4 +305,8 @@ type FilesystemStats struct {
 	TotalUsageBytes *uint64 `json:"totalUsageBytes,omitempty"`
 	// Number of bytes consumed by a container through its root filesystem.
 	BaseUsageBytes *uint64 `json:"baseUsageBytes,omitempty"`
+	// Number of inodes used within the container's root filesystem.
+	// This only accounts for inodes that are shared across containers,
+	// and does not include inodes used in mounted directories.
+	InodeUsage *uint64 `json:"containter_inode_usage,omitempty"`
 }

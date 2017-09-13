@@ -8,7 +8,7 @@ import (
 
 	kapi "k8s.io/kubernetes/pkg/api"
 
-	"github.com/openshift/origin/pkg/build/api"
+	buildapi "github.com/openshift/origin/pkg/build/apis/build"
 	"github.com/openshift/origin/pkg/client/testclient"
 	"github.com/openshift/origin/pkg/generate/git"
 	s2iapi "github.com/openshift/source-to-image/pkg/api"
@@ -23,12 +23,12 @@ type testStiBuilderFactory struct {
 
 // Builder implements builderFactory. It returns a mock S2IBuilder instance that
 // returns specific errors.
-func (factory testStiBuilderFactory) Builder(config *s2iapi.Config, overrides s2ibuild.Overrides) (s2ibuild.Builder, error) {
+func (factory testStiBuilderFactory) Builder(config *s2iapi.Config, overrides s2ibuild.Overrides) (s2ibuild.Builder, s2iapi.BuildInfo, error) {
 	// Return a strategy error if non-nil.
 	if factory.getStrategyErr != nil {
-		return nil, factory.getStrategyErr
+		return nil, s2iapi.BuildInfo{}, factory.getStrategyErr
 	}
-	return testBuilder{buildError: factory.buildError}, nil
+	return testBuilder{buildError: factory.buildError}, s2iapi.BuildInfo{}, nil
 }
 
 // testBuilder is a mock implementation of s2iapi.Builder.
@@ -38,7 +38,9 @@ type testBuilder struct {
 
 // Build implements s2iapi.Builder. It always returns a mocked build error.
 func (builder testBuilder) Build(config *s2iapi.Config) (*s2iapi.Result, error) {
-	return nil, builder.buildError
+	return &s2iapi.Result{
+		BuildInfo: s2iapi.BuildInfo{},
+	}, builder.buildError
 }
 
 type testS2IBuilderConfig struct {
@@ -54,10 +56,9 @@ func newTestS2IBuilder(config testS2IBuilderConfig) *S2IBuilder {
 		&FakeDocker{
 			errPushImage: config.errPushImage,
 		},
-		"/docker.socket",
+		"unix:///var/run/docker.sock",
 		testclient.NewSimpleFake().Builds(""),
 		makeBuild(),
-		git.NewRepository(),
 		testStiBuilderFactory{
 			getStrategyErr: config.getStrategyErr,
 			buildError:     config.buildError,
@@ -67,17 +68,14 @@ func newTestS2IBuilder(config testS2IBuilderConfig) *S2IBuilder {
 	)
 }
 
-func makeBuild() *api.Build {
+func makeBuild() *buildapi.Build {
 	t := true
-	return &api.Build{
-		Spec: api.BuildSpec{
-			CommonSpec: api.CommonSpec{
-				Source: api.BuildSource{
-					Git: &api.GitBuildSource{
-						URI: "http://localhost/123",
-					}},
-				Strategy: api.BuildStrategy{
-					SourceStrategy: &api.SourceBuildStrategy{
+	return &buildapi.Build{
+		Spec: buildapi.BuildSpec{
+			CommonSpec: buildapi.CommonSpec{
+				Source: buildapi.BuildSource{},
+				Strategy: buildapi.BuildStrategy{
+					SourceStrategy: &buildapi.SourceBuildStrategy{
 						Env: append([]kapi.EnvVar{},
 							kapi.EnvVar{
 								Name:  "HTTPS_PROXY",
@@ -92,7 +90,7 @@ func makeBuild() *api.Build {
 						},
 						Incremental: &t,
 					}},
-				Output: api.BuildOutput{
+				Output: buildapi.BuildOutput{
 					To: &kapi.ObjectReference{
 						Kind: "DockerImage",
 						Name: "test/test-result:latest",
@@ -100,7 +98,7 @@ func makeBuild() *api.Build {
 				},
 			},
 		},
-		Status: api.BuildStatus{
+		Status: buildapi.BuildStatus{
 			OutputDockerImageReference: "test/test-result:latest",
 		},
 	}
@@ -137,7 +135,7 @@ func TestGetStrategyError(t *testing.T) {
 }
 
 func TestCopyToVolumeList(t *testing.T) {
-	newArtifacts := []api.ImageSourcePath{
+	newArtifacts := []buildapi.ImageSourcePath{
 		{
 			SourcePath:     "/path/to/source",
 			DestinationDir: "path/to/destination",
@@ -171,6 +169,9 @@ func TestBuildEnvVars(t *testing.T) {
 			Name:  "OPENSHIFT_BUILD_SOURCE",
 			Value: "http://localhost/123",
 		}, s2iapi.EnvironmentSpec{
+			Name:  "OPENSHIFT_BUILD_COMMIT",
+			Value: "1575a90c569a7cc0eea84fbd3304d9df37c9f5ee",
+		}, s2iapi.EnvironmentSpec{
 			Name:  "HTTPS_PROXY",
 			Value: "https://test/secure:8443",
 		}, s2iapi.EnvironmentSpec{
@@ -178,22 +179,40 @@ func TestBuildEnvVars(t *testing.T) {
 			Value: "http://test/insecure:8080",
 		},
 	}
+	expectedLabelMap := map[string]string{
+		"io.openshift.build.commit.id": "1575a90c569a7cc0eea84fbd3304d9df37c9f5ee",
+		"io.openshift.build.name":      "openshift-test-1-build",
+		"io.openshift.build.namespace": "openshift-demo",
+	}
 
 	mockBuild := makeBuild()
 	mockBuild.Name = "openshift-test-1-build"
 	mockBuild.Namespace = "openshift-demo"
-	resultedEnvList := buildEnvVars(mockBuild)
+	mockBuild.Spec.Source.Git = &buildapi.GitBuildSource{URI: "http://localhost/123"}
+	sourceInfo := &git.SourceInfo{}
+	sourceInfo.CommitID = "1575a90c569a7cc0eea84fbd3304d9df37c9f5ee"
+	resultedEnvList := buildEnvVars(mockBuild, sourceInfo)
 	if !reflect.DeepEqual(expectedEnvList, resultedEnvList) {
-		t.Errorf("Expected EnvironmentList to match: %#v, got %#v", expectedEnvList, resultedEnvList)
+		t.Errorf("Expected EnvironmentList to match:\n%#v\ngot:\n%#v", expectedEnvList, resultedEnvList)
 	}
+
+	resultedLabelList := buildLabels(mockBuild, sourceInfo)
+	resultedLabelMap := map[string]string{}
+	for _, label := range resultedLabelList {
+		resultedLabelMap[label.Key] = label.Value
+	}
+	if !reflect.DeepEqual(expectedLabelMap, resultedLabelMap) {
+		t.Errorf("Expected LabelList to match:\n%#v\ngot:\n%#v", expectedLabelMap, resultedLabelMap)
+	}
+
 }
 
 func TestScriptProxyConfig(t *testing.T) {
-	newBuild := &api.Build{
-		Spec: api.BuildSpec{
-			CommonSpec: api.CommonSpec{
-				Strategy: api.BuildStrategy{
-					SourceStrategy: &api.SourceBuildStrategy{
+	newBuild := &buildapi.Build{
+		Spec: buildapi.BuildSpec{
+			CommonSpec: buildapi.CommonSpec{
+				Strategy: buildapi.BuildStrategy{
+					SourceStrategy: &buildapi.SourceBuildStrategy{
 						Env: append([]kapi.EnvVar{}, kapi.EnvVar{
 							Name:  "HTTPS_PROXY",
 							Value: "https://test/secure",
@@ -208,7 +227,7 @@ func TestScriptProxyConfig(t *testing.T) {
 	}
 	resultedProxyConf, err := scriptProxyConfig(newBuild)
 	if err != nil {
-		t.Fatalf("An error occured while parsing the proxy config: %v", err)
+		t.Fatalf("An error occurred while parsing the proxy config: %v", err)
 	}
 	if resultedProxyConf.HTTPProxy.Path != "/insecure" {
 		t.Errorf("Expected HTTP Proxy path to be /insecure, got: %v", resultedProxyConf.HTTPProxy.Path)

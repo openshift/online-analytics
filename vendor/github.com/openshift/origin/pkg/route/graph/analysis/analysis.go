@@ -10,7 +10,7 @@ import (
 
 	osgraph "github.com/openshift/origin/pkg/api/graph"
 	kubegraph "github.com/openshift/origin/pkg/api/kubegraph/nodes"
-	routeapi "github.com/openshift/origin/pkg/route/api"
+	routeapi "github.com/openshift/origin/pkg/route/apis/route"
 	routeedges "github.com/openshift/origin/pkg/route/graph"
 	routegraph "github.com/openshift/origin/pkg/route/graph/nodes"
 )
@@ -174,7 +174,7 @@ func FindRouteAdmissionFailures(g osgraph.Graph, f osgraph.Namer) []osgraph.Mark
 
 					Severity: osgraph.ErrorSeverity,
 					Key:      RouteNotAdmittedTypeErr,
-					Message:  fmt.Sprintf("%s was not accepted by router %q: %s (%s)", f.ResourceName(routeNode), ingress.RouterName, condition.Message, condition.Reason),
+					Message:  fmt.Sprintf("%s was not accepted by router %q: %s%s (%s)", f.ResourceName(routeNode), ingress.RouterName, ingress.RouterCanonicalHostname, condition.Message, condition.Reason),
 				})
 				break Route
 			}

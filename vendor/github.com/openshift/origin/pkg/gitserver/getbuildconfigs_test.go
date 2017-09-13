@@ -5,15 +5,16 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime"
 
-	buildapi "github.com/openshift/origin/pkg/build/api"
+	buildapi "github.com/openshift/origin/pkg/build/apis/build"
 	"github.com/openshift/origin/pkg/client/testclient"
 )
 
 func bc(name string, annotation string) *buildapi.BuildConfig {
 	obj := &buildapi.BuildConfig{}
 	obj.Name = name
+	obj.Namespace = "test"
 	obj.Annotations = map[string]string{}
 	if len(annotation) > 0 {
 		obj.Annotations[gitRepositoryAnnotationKey] = annotation

@@ -7,9 +7,10 @@ import (
 	"errors"
 	"fmt"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
 
-	routes "github.com/openshift/origin/pkg/route/api"
+	routes "github.com/openshift/origin/pkg/route/apis/route"
 )
 
 const routeUnaccepted = `
@@ -21,7 +22,7 @@ An unaccepted route is most likely due to one of the following reasons:
 If a router has been deployed, look for duplicate matching routes by
 running the following:
 
-  oc get --all-namespaces routes --template='{{range .items}}{{if eq .spec.host "%[2]s"}}{{println .metadata.name "in" .metadata.namespace}}{{end}}{{end}}'
+  $ oc get --all-namespaces routes --template='{{range .items}}{{if eq .spec.host "%[2]s"}}{{println .metadata.name "in" .metadata.namespace}}{{end}}{{end}}'
 
 `
 const routeCertMissingHostName = `
@@ -31,7 +32,7 @@ Try updating the route certificate to include its host as either the CommonName 
 //checkRoutes looks through the logging infra routes to see if they have been accepted, and ...
 func checkRoutes(r diagnosticReporter, adapter routesAdapter, project string) {
 	r.Debug("AGL0300", "Checking routes...")
-	routeList, err := adapter.routes(project, kapi.ListOptions{LabelSelector: loggingSelector.AsSelector()})
+	routeList, err := adapter.routes(project, metav1.ListOptions{LabelSelector: loggingSelector.AsSelector().String()})
 	if err != nil {
 		r.Error("AGL0305", err, fmt.Sprintf("There was an error retrieving routes in the project '%s' with selector '%s': %s", project, loggingSelector.AsSelector(), err))
 		return

@@ -1,10 +1,10 @@
 package testclient
 
 import (
-	"k8s.io/kubernetes/pkg/client/restclient"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
+	restclient "k8s.io/client-go/rest"
+	clientgotesting "k8s.io/client-go/testing"
 
-	buildapi "github.com/openshift/origin/pkg/build/api"
+	buildapi "github.com/openshift/origin/pkg/build/apis/build"
 )
 
 // FakeBuildLogs implements BuildLogsInterface. Meant to be embedded into a struct to get a default
@@ -15,10 +15,10 @@ type FakeBuildLogs struct {
 }
 
 func (c *FakeBuildLogs) Get(name string, opt buildapi.BuildLogOptions) *restclient.Request {
-	action := ktestclient.GenericActionImpl{}
+	action := clientgotesting.GenericActionImpl{}
 	action.Verb = "get"
 	action.Namespace = c.Namespace
-	action.Resource = "builds"
+	action.Resource = buildsResource
 	action.Subresource = "log"
 	action.Value = opt
 

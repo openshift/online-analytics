@@ -13,10 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	knet "k8s.io/kubernetes/pkg/util/net"
+	knet "k8s.io/apimachinery/pkg/util/net"
 
 	configapi "github.com/openshift/origin/pkg/cmd/server/api"
-	testutil "github.com/openshift/origin/test/util"
 	testserver "github.com/openshift/origin/test/util/server"
 )
 
@@ -52,13 +51,12 @@ func TestWebConsoleExtensions(t *testing.T) {
 	}
 
 	// Build master config.
-	testutil.RequireEtcd(t)
-	defer testutil.DumpEtcdOnFailure(t)
 	masterOptions, err := testserver.DefaultMasterOptions()
 	if err != nil {
 		t.Fatalf("Failed creating master configuration: %v", err)
 		return
 	}
+	defer testserver.CleanupMasterEtcd(t, masterOptions)
 	masterOptions.AssetConfig.ExtensionScripts = []string{
 		filepath.Join(tmpDir, "script1.js"),
 		filepath.Join(tmpDir, "script2.js"),
@@ -107,7 +105,7 @@ func TestWebConsoleExtensions(t *testing.T) {
 		"extension scripts": {
 			URL:     "scripts/extensions.js",
 			Status:  http.StatusOK,
-			Type:    "text/javascript",
+			Type:    "application/javascript",
 			Content: []byte(script1 + ";\n" + script2 + ";\n"),
 		},
 		"extension css": {

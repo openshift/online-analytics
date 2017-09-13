@@ -6,15 +6,16 @@ import (
 	"net"
 	"net/url"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apiserver/pkg/util/flag"
 	"k8s.io/kubernetes/pkg/master/ports"
-	"k8s.io/kubernetes/pkg/util"
-	"k8s.io/kubernetes/pkg/util/sets"
 
 	"github.com/openshift/origin/pkg/cmd/server/admin"
 	configapi "github.com/openshift/origin/pkg/cmd/server/api"
@@ -36,12 +37,12 @@ func NewNodeComponentFlag() *utilflags.ComponentFlag {
 	return utilflags.NewComponentFlag(
 		map[string][]string{ComponentGroupNetwork: {ComponentProxy, ComponentPlugins}},
 		ComponentKubelet, ComponentProxy, ComponentPlugins, ComponentDNS,
-	).DefaultDisable(ComponentDNS)
+	)
 }
 
 // NewNodeComponentFlag returns a flag capable of handling enabled components for the network
 func NewNetworkComponentFlag() *utilflags.ComponentFlag {
-	return utilflags.NewComponentFlag(nil, ComponentProxy, ComponentPlugins, ComponentDNS).DefaultDisable(ComponentDNS)
+	return utilflags.NewComponentFlag(nil, ComponentProxy, ComponentPlugins, ComponentDNS)
 }
 
 // NodeArgs is a struct that the command stores flag values into.  It holds a partially complete set of parameters for starting a node.
@@ -55,8 +56,11 @@ type NodeArgs struct {
 	// NodeName is the hostname to identify this node with the master.
 	NodeName string
 
+	// Bootstrap is true if the node should rely on the server to set initial configuration.
+	Bootstrap bool
+
 	MasterCertDir string
-	ConfigDir     util.StringFlag
+	ConfigDir     flag.StringFlag
 
 	AllowDisabledDocker bool
 	// VolumeDir is the volume storage directory.
@@ -65,6 +69,10 @@ type NodeArgs struct {
 	DefaultKubernetesURL *url.URL
 	ClusterDomain        string
 	ClusterDNS           net.IP
+	// DNSBindAddr is provided for the all-in-one start only and is not exposed via a flag
+	DNSBindAddr string
+	// RecursiveResolvConf
+	RecursiveResolvConf string
 
 	// NetworkPluginName is the network plugin to be called for configuring networking for pods.
 	NetworkPluginName string
@@ -79,6 +87,8 @@ func BindNodeArgs(args *NodeArgs, flags *pflag.FlagSet, prefix string, component
 	if components {
 		args.Components.Bind(flags, prefix+"%s", "The set of node components to")
 	}
+
+	flags.StringVar(&args.RecursiveResolvConf, prefix+"recursive-resolv-conf", args.RecursiveResolvConf, "An optional upstream resolv.conf that will override the DNS config.")
 
 	flags.StringVar(&args.NetworkPluginName, prefix+"network-plugin", args.NetworkPluginName, "The network plugin to be called for configuring networking for pods.")
 
@@ -96,6 +106,8 @@ func BindNodeArgs(args *NodeArgs, flags *pflag.FlagSet, prefix string, component
 // BindNodeNetworkArgs binds the options to the flags with prefix + default flag names
 func BindNodeNetworkArgs(args *NodeArgs, flags *pflag.FlagSet, prefix string) {
 	args.Components.Bind(flags, "%s", "The set of network components to")
+
+	flags.StringVar(&args.RecursiveResolvConf, prefix+"recursive-resolv-conf", args.RecursiveResolvConf, "An optional upstream resolv.conf that will override the DNS config.")
 
 	flags.StringVar(&args.NetworkPluginName, prefix+"network-plugin", args.NetworkPluginName, "The network plugin to be called for configuring networking for pods.")
 }
@@ -137,7 +149,7 @@ func (args NodeArgs) Validate() error {
 	if err := args.KubeConnectionArgs.Validate(); err != nil {
 		return err
 	}
-	if _, err := args.KubeConnectionArgs.GetKubernetesAddress(args.DefaultKubernetesURL); err != nil {
+	if addr, _ := args.KubeConnectionArgs.GetKubernetesAddress(args.DefaultKubernetesURL); addr == nil {
 		return errors.New("--kubeconfig must be set to provide API server connection information")
 	}
 	return nil
@@ -167,7 +179,7 @@ func (args NodeArgs) BuildSerializeableNodeConfig() (*configapi.NodeConfig, erro
 		NodeName: args.NodeName,
 
 		ServingInfo: configapi.ServingInfo{
-			BindAddress: net.JoinHostPort(args.ListenArg.ListenAddr.Host, strconv.Itoa(ports.KubeletPort)),
+			BindAddress: args.ListenArg.ListenAddr.HostPort(ports.KubeletPort),
 		},
 
 		ImageConfig: configapi.ImageConfig{
@@ -182,8 +194,11 @@ func (args NodeArgs) BuildSerializeableNodeConfig() (*configapi.NodeConfig, erro
 		VolumeDirectory:     args.VolumeDir,
 		AllowDisabledDocker: args.AllowDisabledDocker,
 
-		DNSDomain: args.ClusterDomain,
-		DNSIP:     dnsIP,
+		DNSBindAddress: args.DNSBindAddr,
+		DNSDomain:      args.ClusterDomain,
+		DNSIP:          dnsIP,
+
+		DNSRecursiveResolvConf: args.RecursiveResolvConf,
 
 		MasterKubeConfig: admin.DefaultNodeKubeConfigFile(args.ConfigDir.Value()),
 
@@ -207,6 +222,24 @@ func (args NodeArgs) BuildSerializeableNodeConfig() (*configapi.NodeConfig, erro
 	configapi.SetProtobufClientDefaults(config.MasterClientConnectionOverrides)
 
 	return config, nil
+}
+
+// MergeSerializeableNodeConfig takes the NodeArgs (partially complete config) and overlays them onto an existing
+// config. Only a subset of node args are allowed to override this config - those that may reasonably be specified
+// as local overrides.
+func (args NodeArgs) MergeSerializeableNodeConfig(config *configapi.NodeConfig) error {
+	if len(args.ClusterDNS) > 0 {
+		config.DNSIP = args.ClusterDNS.String()
+	}
+	if len(args.NodeName) > 0 {
+		config.NodeName = args.NodeName
+	}
+
+	config.ServingInfo.BindAddress = net.JoinHostPort(args.ListenArg.ListenAddr.Host, strconv.Itoa(ports.KubeletPort))
+
+	config.VolumeDirectory = args.VolumeDir
+	config.AllowDisabledDocker = args.AllowDisabledDocker
+	return nil
 }
 
 // GetServerCertHostnames returns the set of hostnames and IP addresses a serving certificate for node on this host might need to be valid for.
@@ -275,4 +308,14 @@ func defaultHostname() (string, error) {
 		return "", fmt.Errorf("Couldn't determine hostname: %v", err)
 	}
 	return strings.ToLower(strings.TrimSpace(string(fqdn))), nil
+}
+
+var invalidNameCharactersRegexp = regexp.MustCompile("[^-a-z0-9]")
+
+func safeSecretName(s string) string {
+	// Remove everything except [-0-9a-z]
+	s = invalidNameCharactersRegexp.ReplaceAllString(strings.ToLower(s), "-")
+	// Remove leading and trailing hyphen(s) that may be introduced by the previous step
+	s = strings.Trim(s, "-")
+	return s
 }

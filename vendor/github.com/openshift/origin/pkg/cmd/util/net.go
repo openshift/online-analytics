@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	knet "k8s.io/kubernetes/pkg/util/net"
-	"k8s.io/kubernetes/pkg/util/sets"
+	knet "k8s.io/apimachinery/pkg/util/net"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/golang/glog"
 )
@@ -19,7 +19,7 @@ import (
 func TryListen(network, hostPort string) (bool, error) {
 	l, err := net.Listen(network, hostPort)
 	if err != nil {
-		glog.V(5).Infof("Failure while checking listen on %s: %v", err)
+		glog.V(5).Infof("Failure while checking listen on %s: %v", hostPort, err)
 		return false, err
 	}
 	defer l.Close()

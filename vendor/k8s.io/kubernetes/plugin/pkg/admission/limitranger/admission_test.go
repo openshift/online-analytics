@@ -17,17 +17,23 @@ limitations under the License.
 package limitranger
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/hashicorp/golang-lru"
-
-	"k8s.io/kubernetes/pkg/admission"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/apiserver/pkg/admission"
+	core "k8s.io/client-go/testing"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/resource"
-	"k8s.io/kubernetes/pkg/client/cache"
+	clientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
+	informers "k8s.io/kubernetes/pkg/client/informers/informers_generated/internalversion"
+	kubeadmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
 )
 
 func getComputeResourceList(cpu, memory string) api.ResourceList {
@@ -59,7 +65,7 @@ func getResourceRequirements(requests, limits api.ResourceList) api.ResourceRequ
 // createLimitRange creates a limit range with the specified data
 func createLimitRange(limitType api.LimitType, min, max, defaultLimit, defaultRequest, maxLimitRequestRatio api.ResourceList) api.LimitRange {
 	return api.LimitRange{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "abc",
 			Namespace: "test",
 		},
@@ -80,7 +86,7 @@ func createLimitRange(limitType api.LimitType, min, max, defaultLimit, defaultRe
 
 func validLimitRange() api.LimitRange {
 	return api.LimitRange{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "abc",
 			Namespace: "test",
 		},
@@ -105,7 +111,7 @@ func validLimitRange() api.LimitRange {
 
 func validLimitRangeNoDefaults() api.LimitRange {
 	return api.LimitRange{
-		ObjectMeta: api.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:      "abc",
 			Namespace: "test",
 		},
@@ -128,7 +134,7 @@ func validLimitRangeNoDefaults() api.LimitRange {
 
 func validPod(name string, numContainers int, resources api.ResourceRequirements) api.Pod {
 	pod := api.Pod{
-		ObjectMeta: api.ObjectMeta{Name: name, Namespace: "test"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test"},
 		Spec:       api.PodSpec{},
 	}
 	pod.Spec.Containers = make([]api.Container, 0, numContainers)
@@ -161,7 +167,7 @@ func TestDefaultContainerResourceRequirements(t *testing.T) {
 	}
 
 	actual := defaultContainerResourceRequirements(&limitRange)
-	if !api.Semantic.DeepEqual(expected, actual) {
+	if !apiequality.Semantic.DeepEqual(expected, actual) {
 		t.Errorf("actual.Limits != expected.Limits; %v != %v", actual.Limits, expected.Limits)
 		t.Errorf("actual.Requests != expected.Requests; %v != %v", actual.Requests, expected.Requests)
 		t.Errorf("expected != actual; %v != %v", expected, actual)
@@ -194,7 +200,7 @@ func TestMergePodResourceRequirements(t *testing.T) {
 	mergePodResourceRequirements(&pod, &defaultRequirements)
 	for i := range pod.Spec.Containers {
 		actual := pod.Spec.Containers[i].Resources
-		if !api.Semantic.DeepEqual(expected, actual) {
+		if !apiequality.Semantic.DeepEqual(expected, actual) {
 			t.Errorf("pod %v, expected != actual; %v != %v", pod.Name, expected, actual)
 		}
 	}
@@ -213,13 +219,13 @@ func TestMergePodResourceRequirements(t *testing.T) {
 	mergePodResourceRequirements(&pod, &defaultRequirements)
 	for i := range pod.Spec.Containers {
 		actual := pod.Spec.Containers[i].Resources
-		if !api.Semantic.DeepEqual(expected, actual) {
+		if !apiequality.Semantic.DeepEqual(expected, actual) {
 			t.Errorf("pod %v, expected != actual; %v != %v", pod.Name, expected, actual)
 		}
 	}
 	for i := range pod.Spec.InitContainers {
 		actual := pod.Spec.InitContainers[i].Resources
-		if !api.Semantic.DeepEqual(expected, actual) {
+		if !apiequality.Semantic.DeepEqual(expected, actual) {
 			t.Errorf("pod %v, expected != actual; %v != %v", pod.Name, expected, actual)
 		}
 	}
@@ -233,13 +239,13 @@ func TestMergePodResourceRequirements(t *testing.T) {
 	mergePodResourceRequirements(&pod, &defaultRequirements)
 	for i := range pod.Spec.Containers {
 		actual := pod.Spec.Containers[i].Resources
-		if !api.Semantic.DeepEqual(expected, actual) {
+		if !apiequality.Semantic.DeepEqual(expected, actual) {
 			t.Errorf("pod %v, expected != actual; %v != %v", pod.Name, expected, actual)
 		}
 	}
 	for i := range pod.Spec.InitContainers {
 		actual := pod.Spec.InitContainers[i].Resources
-		if !api.Semantic.DeepEqual(initInputs[i], actual) {
+		if !apiequality.Semantic.DeepEqual(initInputs[i], actual) {
 			t.Errorf("pod %v, expected != actual; %v != %v", pod.Name, initInputs[i], actual)
 		}
 	}
@@ -522,20 +528,16 @@ func TestPodLimitFuncApplyDefault(t *testing.T) {
 }
 
 func TestLimitRangerIgnoresSubresource(t *testing.T) {
-	client := fake.NewSimpleClientset()
-	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{"namespace": cache.MetaNamespaceIndexFunc})
-	handler := &limitRanger{
-		Handler: admission.NewHandler(admission.Create, admission.Update),
-		client:  client,
-		actions: &DefaultLimitRangerActions{},
-		indexer: indexer,
-	}
-
 	limitRange := validLimitRangeNoDefaults()
-	testPod := validPod("testPod", 1, api.ResourceRequirements{})
+	mockClient := newMockClientForTest([]api.LimitRange{limitRange})
+	handler, informerFactory, err := newHandlerForTest(mockClient)
+	if err != nil {
+		t.Errorf("unexpected error initializing handler: %v", err)
+	}
+	informerFactory.Start(wait.NeverStop)
 
-	indexer.Add(&limitRange)
-	err := handler.Admit(admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
+	testPod := validPod("testPod", 1, api.ResourceRequirements{})
+	err = handler.Admit(admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
 	if err == nil {
 		t.Errorf("Expected an error since the pod did not specify resource limits in its update call")
 	}
@@ -547,28 +549,16 @@ func TestLimitRangerIgnoresSubresource(t *testing.T) {
 
 }
 
-func TestLimitRangerCacheMisses(t *testing.T) {
-	liveLookupCache, err := lru.New(10000)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	client := fake.NewSimpleClientset()
-	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{"namespace": cache.MetaNamespaceIndexFunc})
-	handler := &limitRanger{
-		Handler:         admission.NewHandler(admission.Create, admission.Update),
-		client:          client,
-		actions:         &DefaultLimitRangerActions{},
-		indexer:         indexer,
-		liveLookupCache: liveLookupCache,
-	}
-
+func TestLimitRangerAdmitPod(t *testing.T) {
 	limitRange := validLimitRangeNoDefaults()
+	mockClient := newMockClientForTest([]api.LimitRange{limitRange})
+	handler, informerFactory, err := newHandlerForTest(mockClient)
+	if err != nil {
+		t.Errorf("unexpected error initializing handler: %v", err)
+	}
+	informerFactory.Start(wait.NeverStop)
+
 	testPod := validPod("testPod", 1, api.ResourceRequirements{})
-
-	// add to the lru cache
-	liveLookupCache.Add(limitRange.Namespace, liveLookupEntry{expiry: time.Now().Add(time.Duration(30 * time.Second)), items: []*api.LimitRange{&limitRange}})
-
 	err = handler.Admit(admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
 	if err == nil {
 		t.Errorf("Expected an error since the pod did not specify resource limits in its update call")
@@ -580,72 +570,40 @@ func TestLimitRangerCacheMisses(t *testing.T) {
 	}
 }
 
-func TestLimitRangerCacheAndLRUMisses(t *testing.T) {
-	liveLookupCache, err := lru.New(10000)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	limitRange := validLimitRangeNoDefaults()
-	client := fake.NewSimpleClientset(&limitRange)
-	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{"namespace": cache.MetaNamespaceIndexFunc})
-	handler := &limitRanger{
-		Handler:         admission.NewHandler(admission.Create, admission.Update),
-		client:          client,
-		actions:         &DefaultLimitRangerActions{},
-		indexer:         indexer,
-		liveLookupCache: liveLookupCache,
-	}
-
-	testPod := validPod("testPod", 1, api.ResourceRequirements{})
-
-	err = handler.Admit(admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
-	if err == nil {
-		t.Errorf("Expected an error since the pod did not specify resource limits in its update call")
-	}
-
-	err = handler.Admit(admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "status", admission.Update, nil))
-	if err != nil {
-		t.Errorf("Should have ignored calls to any subresource of pod %v", err)
-	}
+// newMockClientForTest creates a mock client that returns a client configured for the specified list of limit ranges
+func newMockClientForTest(limitRanges []api.LimitRange) *fake.Clientset {
+	mockClient := &fake.Clientset{}
+	mockClient.AddReactor("list", "limitranges", func(action core.Action) (bool, runtime.Object, error) {
+		limitRangeList := &api.LimitRangeList{
+			ListMeta: metav1.ListMeta{
+				ResourceVersion: fmt.Sprintf("%d", len(limitRanges)),
+			},
+		}
+		for index, value := range limitRanges {
+			value.ResourceVersion = fmt.Sprintf("%d", index)
+			limitRangeList.Items = append(limitRangeList.Items, value)
+		}
+		return true, limitRangeList, nil
+	})
+	return mockClient
 }
 
-func TestLimitRangerCacheAndLRUExpiredMisses(t *testing.T) {
-	liveLookupCache, err := lru.New(10000)
+// newHandlerForTest returns a handler configured for testing.
+func newHandlerForTest(c clientset.Interface) (admission.Interface, informers.SharedInformerFactory, error) {
+	f := informers.NewSharedInformerFactory(c, 5*time.Minute)
+	handler, err := NewLimitRanger(&DefaultLimitRangerActions{})
 	if err != nil {
-		t.Fatal(err)
+		return nil, f, err
 	}
-
-	limitRange := validLimitRangeNoDefaults()
-	client := fake.NewSimpleClientset(&limitRange)
-	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{"namespace": cache.MetaNamespaceIndexFunc})
-	handler := &limitRanger{
-		Handler:         admission.NewHandler(admission.Create, admission.Update),
-		client:          client,
-		actions:         &DefaultLimitRangerActions{},
-		indexer:         indexer,
-		liveLookupCache: liveLookupCache,
-	}
-
-	testPod := validPod("testPod", 1, api.ResourceRequirements{})
-
-	// add to the lru cache
-	liveLookupCache.Add(limitRange.Namespace, liveLookupEntry{expiry: time.Now().Add(time.Duration(-30 * time.Second)), items: []*api.LimitRange{}})
-
-	err = handler.Admit(admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "", admission.Update, nil))
-	if err == nil {
-		t.Errorf("Expected an error since the pod did not specify resource limits in its update call")
-	}
-
-	err = handler.Admit(admission.NewAttributesRecord(&testPod, nil, api.Kind("Pod").WithVersion("version"), limitRange.Namespace, "testPod", api.Resource("pods").WithVersion("version"), "status", admission.Update, nil))
-	if err != nil {
-		t.Errorf("Should have ignored calls to any subresource of pod %v", err)
-	}
+	pluginInitializer := kubeadmission.NewPluginInitializer(c, nil, f, nil, nil, nil, nil)
+	pluginInitializer.Initialize(handler)
+	err = admission.Validate(handler)
+	return handler, f, err
 }
 
 func validPersistentVolumeClaim(name string, resources api.ResourceRequirements) api.PersistentVolumeClaim {
 	pvc := api.PersistentVolumeClaim{
-		ObjectMeta: api.ObjectMeta{Name: name, Namespace: "test"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test"},
 		Spec: api.PersistentVolumeClaimSpec{
 			Resources: resources,
 		},

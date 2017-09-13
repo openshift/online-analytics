@@ -5,9 +5,10 @@ import (
 	"net"
 	"strconv"
 
-	imageapi "github.com/openshift/origin/pkg/image/api"
+	imageapi "github.com/openshift/origin/pkg/image/apis/image"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/util/intstr"
 )
 
 type ValidateFunc func(string) error
@@ -40,7 +41,7 @@ func WaitForAddress(pod *kapi.Pod, service *kapi.Service, ns string) (string, er
 	if err != nil {
 		return "", err
 	}
-	watcher, err := client.Endpoints(ns).Watch(kapi.ListOptions{})
+	watcher, err := client.Core().Endpoints(ns).Watch(metav1.ListOptions{})
 	if err != nil {
 		return "", fmt.Errorf("Unexpected error: %v", err)
 	}
@@ -82,7 +83,7 @@ func CreatePodFromImage(stream *imageapi.ImageStream, tag, ns string) *kapi.Pod 
 		imageName += ":" + tag
 	}
 	pod := &kapi.Pod{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name:   ns,
 			Labels: map[string]string{"name": ns},
 		},
@@ -96,7 +97,7 @@ func CreatePodFromImage(stream *imageapi.ImageStream, tag, ns string) *kapi.Pod 
 			RestartPolicy: kapi.RestartPolicyNever,
 		},
 	}
-	if pod, err := client.Pods(ns).Create(pod); err != nil {
+	if pod, err := client.Core().Pods(ns).Create(pod); err != nil {
 		fmt.Printf("%v\n", err)
 		return nil
 	} else {
@@ -111,7 +112,7 @@ func CreateServiceForPod(pod *kapi.Pod, ns string) *kapi.Service {
 		return nil
 	}
 	service := &kapi.Service{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: ns,
 		},
 		Spec: kapi.ServiceSpec{
@@ -122,7 +123,7 @@ func CreateServiceForPod(pod *kapi.Pod, ns string) *kapi.Service {
 			}},
 		},
 	}
-	if service, err := client.Services(ns).Create(service); err != nil {
+	if service, err := client.Core().Services(ns).Create(service); err != nil {
 		fmt.Printf("%v\n", err)
 		return nil
 	} else {
@@ -136,6 +137,6 @@ func CleanupServiceAndPod(pod *kapi.Pod, service *kapi.Service, ns string) {
 	if err != nil {
 		return
 	}
-	client.Pods(ns).Delete(pod.Name, nil)
-	client.Services(ns).Delete(service.Name)
+	client.Core().Pods(ns).Delete(pod.Name, nil)
+	client.Core().Services(ns).Delete(service.Name, nil)
 }

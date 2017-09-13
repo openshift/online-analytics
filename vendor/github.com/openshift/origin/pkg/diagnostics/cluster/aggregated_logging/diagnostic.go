@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"net/url"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	kapi "k8s.io/kubernetes/pkg/api"
 	kapisext "k8s.io/kubernetes/pkg/apis/extensions"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/labels"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
-	authapi "github.com/openshift/origin/pkg/authorization/api"
+	authapi "github.com/openshift/origin/pkg/authorization/apis/authorization"
 	"github.com/openshift/origin/pkg/client"
 	configapi "github.com/openshift/origin/pkg/cmd/server/api"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
 	hostdiag "github.com/openshift/origin/pkg/diagnostics/host"
 	"github.com/openshift/origin/pkg/diagnostics/types"
-	routesapi "github.com/openshift/origin/pkg/route/api"
+	routesapi "github.com/openshift/origin/pkg/route/apis/route"
+	securityapi "github.com/openshift/origin/pkg/security/apis/security"
+	"github.com/openshift/origin/pkg/security/legacyclient"
 )
 
 // AggregatedLogging is a Diagnostic to check the configurations
@@ -27,7 +30,7 @@ type AggregatedLogging struct {
 	masterConfig     *configapi.MasterConfig
 	MasterConfigFile string
 	OsClient         *client.Client
-	KubeClient       *kclient.Client
+	KubeClient       kclientset.Interface
 	result           types.DiagnosticResult
 }
 
@@ -45,46 +48,46 @@ const (
 var loggingSelector = labels.Set{loggingInfraKey: "support"}
 
 //NewAggregatedLogging returns the AggregatedLogging Diagnostic
-func NewAggregatedLogging(masterConfigFile string, kclient *kclient.Client, osclient *client.Client) *AggregatedLogging {
+func NewAggregatedLogging(masterConfigFile string, kclient kclientset.Interface, osclient *client.Client) *AggregatedLogging {
 	return &AggregatedLogging{nil, masterConfigFile, osclient, kclient, types.NewDiagnosticResult(AggregatedLoggingName)}
 }
 
-func (d *AggregatedLogging) getScc(name string) (*kapi.SecurityContextConstraints, error) {
-	return d.KubeClient.SecurityContextConstraints().Get(name)
+func (d *AggregatedLogging) getScc(name string) (*securityapi.SecurityContextConstraints, error) {
+	return legacyclient.NewFromClient(d.KubeClient.Core().RESTClient()).Get(name, metav1.GetOptions{})
 }
 
 func (d *AggregatedLogging) getClusterRoleBinding(name string) (*authapi.ClusterRoleBinding, error) {
-	return d.OsClient.ClusterRoleBindings().Get(name)
+	return d.OsClient.ClusterRoleBindings().Get(name, metav1.GetOptions{})
 }
 
-func (d *AggregatedLogging) routes(project string, options kapi.ListOptions) (*routesapi.RouteList, error) {
+func (d *AggregatedLogging) routes(project string, options metav1.ListOptions) (*routesapi.RouteList, error) {
 	return d.OsClient.Routes(project).List(options)
 }
 
-func (d *AggregatedLogging) serviceAccounts(project string, options kapi.ListOptions) (*kapi.ServiceAccountList, error) {
-	return d.KubeClient.ServiceAccounts(project).List(options)
+func (d *AggregatedLogging) serviceAccounts(project string, options metav1.ListOptions) (*kapi.ServiceAccountList, error) {
+	return d.KubeClient.Core().ServiceAccounts(project).List(options)
 }
 
-func (d *AggregatedLogging) services(project string, options kapi.ListOptions) (*kapi.ServiceList, error) {
-	return d.KubeClient.Services(project).List(options)
+func (d *AggregatedLogging) services(project string, options metav1.ListOptions) (*kapi.ServiceList, error) {
+	return d.KubeClient.Core().Services(project).List(options)
 }
 
 func (d *AggregatedLogging) endpointsForService(project string, service string) (*kapi.Endpoints, error) {
-	return d.KubeClient.Endpoints(project).Get(service)
+	return d.KubeClient.Core().Endpoints(project).Get(service, metav1.GetOptions{})
 }
 
-func (d *AggregatedLogging) daemonsets(project string, options kapi.ListOptions) (*kapisext.DaemonSetList, error) {
-	return d.KubeClient.DaemonSets(project).List(kapi.ListOptions{LabelSelector: loggingInfraFluentdSelector.AsSelector()})
+func (d *AggregatedLogging) daemonsets(project string, options metav1.ListOptions) (*kapisext.DaemonSetList, error) {
+	return d.KubeClient.Extensions().DaemonSets(project).List(metav1.ListOptions{LabelSelector: loggingInfraFluentdSelector.AsSelector().String()})
 }
 
-func (d *AggregatedLogging) nodes(options kapi.ListOptions) (*kapi.NodeList, error) {
-	return d.KubeClient.Nodes().List(kapi.ListOptions{})
+func (d *AggregatedLogging) nodes(options metav1.ListOptions) (*kapi.NodeList, error) {
+	return d.KubeClient.Core().Nodes().List(metav1.ListOptions{})
 }
 
-func (d *AggregatedLogging) pods(project string, options kapi.ListOptions) (*kapi.PodList, error) {
-	return d.KubeClient.Pods(project).List(options)
+func (d *AggregatedLogging) pods(project string, options metav1.ListOptions) (*kapi.PodList, error) {
+	return d.KubeClient.Core().Pods(project).List(options)
 }
-func (d *AggregatedLogging) deploymentconfigs(project string, options kapi.ListOptions) (*deployapi.DeploymentConfigList, error) {
+func (d *AggregatedLogging) deploymentconfigs(project string, options metav1.ListOptions) (*deployapi.DeploymentConfigList, error) {
 	return d.OsClient.DeploymentConfigs(project).List(options)
 }
 
@@ -125,7 +128,10 @@ func (d *AggregatedLogging) CanRun() (bool, error) {
 	var err error
 	d.masterConfig, err = hostdiag.GetMasterConfig(d.result, d.MasterConfigFile)
 	if err != nil {
-		return false, errors.New("Unreadable master config; skipping this diagnostic.")
+		return false, errors.New("Master configuration is unreadable")
+	}
+	if d.masterConfig.AssetConfig.LoggingPublicURL == "" {
+		return false, errors.New("No LoggingPublicURL is defined in the master configuration")
 	}
 	return true, nil
 }
@@ -146,11 +152,11 @@ func (d *AggregatedLogging) Check() types.DiagnosticResult {
 }
 
 const projectNodeSelectorWarning = `
-The project '%[1]s' was found with either a missing or non-empty node selector annotation.  
-This could keep Fluentd from running on certain nodes and collecting logs from the entire cluster.  
+The project '%[1]s' was found with either a missing or non-empty node selector annotation.
+This could keep Fluentd from running on certain nodes and collecting logs from the entire cluster.
 You can correct it by editing the project:
 
-  oc edit namespace %[1]s
+  $ oc edit namespace %[1]s
 
 and updating the annotation:
 
@@ -172,7 +178,7 @@ func retrieveLoggingProject(r types.DiagnosticResult, masterCfg *configapi.Maste
 		return projectName
 	}
 
-	routeList, err := osClient.Routes(kapi.NamespaceAll).List(kapi.ListOptions{LabelSelector: loggingSelector.AsSelector()})
+	routeList, err := osClient.Routes(metav1.NamespaceAll).List(metav1.ListOptions{LabelSelector: loggingSelector.AsSelector().String()})
 	if err != nil {
 		r.Error("AGL0012", err, fmt.Sprintf("There was an error while trying to find the route associated with '%s' which is probably transient: %s", loggingUrl, err))
 		return projectName
@@ -194,7 +200,7 @@ func retrieveLoggingProject(r types.DiagnosticResult, masterCfg *configapi.Maste
 		r.Error("AGL0014", errors.New(message), message)
 		return ""
 	}
-	project, err := osClient.Projects().Get(projectName)
+	project, err := osClient.Projects().Get(projectName, metav1.GetOptions{})
 	if err != nil {
 		r.Error("AGL0018", err, fmt.Sprintf("There was an error retrieving project '%s' which is most likely a transient error: %s", projectName, err))
 		return ""

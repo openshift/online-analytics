@@ -6,30 +6,27 @@ import (
 	"sort"
 	"strings"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/util/sets"
 
-	"github.com/openshift/origin/pkg/cmd/cli/describe"
+	oapi "github.com/openshift/origin/pkg/api"
+	"github.com/openshift/origin/pkg/generate"
 	"github.com/openshift/origin/pkg/generate/app"
-	imageapi "github.com/openshift/origin/pkg/image/api"
+	imageapi "github.com/openshift/origin/pkg/image/apis/image"
+	"github.com/openshift/origin/pkg/oc/cli/describe"
 )
 
-// These constants represent common annotations keys
-const (
-	// OpenShiftDisplayName is a common, optional annotation that stores the name displayed by a UI when referencing a resource.
-	OpenShiftDisplayName = "openshift.io/display-name"
-)
-
-func displayName(meta kapi.ObjectMeta) string {
+func displayName(meta metav1.ObjectMeta) string {
 	// If an object has a display name, prefer it over the meta name.
-	displayName := meta.Annotations[OpenShiftDisplayName]
+	displayName := meta.Annotations[oapi.OpenShiftDisplayName]
 	if len(displayName) > 0 {
 		return displayName
 	}
 	return meta.Name
 }
 
-func localOrRemoteName(meta kapi.ObjectMeta, namespace string) string {
+func localOrRemoteName(meta metav1.ObjectMeta, namespace string) string {
 	if len(meta.Namespace) == 0 {
 		return meta.Name
 	}
@@ -148,15 +145,9 @@ func describeBuildPipelineWithImage(out io.Writer, ref app.ComponentReference, p
 				}
 				matches = append(matches, t.Platform)
 			}
-			if len(matches) > 0 && !pipeline.Build.Strategy.IsDockerBuild {
+			if len(matches) > 0 && pipeline.Build.Strategy.Strategy == generate.StrategySource {
 				fmt.Fprintf(out, "    * The source repository appears to match: %s\n", strings.Join(matches, ", "))
 			}
-		}
-		var strategy string
-		if pipeline.Build.Strategy.IsDockerBuild {
-			strategy = "Docker"
-		} else {
-			strategy = "source"
 		}
 		noSource := false
 		var source string
@@ -166,7 +157,7 @@ func describeBuildPipelineWithImage(out io.Writer, ref app.ComponentReference, p
 			source = "binary input"
 		case len(s.DockerfileContents) > 0:
 			source = "a predefined Dockerfile"
-		case s.URL != nil && len(s.URL.Host) > 0:
+		case s.URL != nil && len(s.URL.URL.Host) > 0:
 			source = fmt.Sprintf("source code from %s", s.URL)
 		case s.URL != nil:
 			noSource = true
@@ -175,7 +166,7 @@ func describeBuildPipelineWithImage(out io.Writer, ref app.ComponentReference, p
 			source = "<unknown>"
 		}
 
-		fmt.Fprintf(out, "    * A %s build using %s will be created\n", strategy, source)
+		fmt.Fprintf(out, "    * A %s build using %s will be created\n", pipeline.Build.Strategy.Strategy, source)
 		if buildOut, err := pipeline.Build.Output.BuildOutput(); err == nil && buildOut != nil && buildOut.To != nil {
 			switch to := buildOut.To; {
 			case to.Kind == "ImageStreamTag":

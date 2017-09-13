@@ -1,9 +1,11 @@
 package testclient
 
 import (
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	clientgotesting "k8s.io/client-go/testing"
 
-	userapi "github.com/openshift/origin/pkg/user/api"
+	userapi "github.com/openshift/origin/pkg/user/apis/user"
 )
 
 // FakeUserIdentityMappings implements UserIdentityMappingInterface. Meant to be embedded into a struct to get a default
@@ -12,8 +14,10 @@ type FakeUserIdentityMappings struct {
 	Fake *Fake
 }
 
-func (c *FakeUserIdentityMappings) Get(name string) (*userapi.UserIdentityMapping, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewRootGetAction("useridentitymappings", name), &userapi.UserIdentityMapping{})
+var userIdentityMappingsResource = schema.GroupVersionResource{Group: "", Version: "", Resource: "useridentitymappings"}
+
+func (c *FakeUserIdentityMappings) Get(name string, options metav1.GetOptions) (*userapi.UserIdentityMapping, error) {
+	obj, err := c.Fake.Invokes(clientgotesting.NewRootGetAction(userIdentityMappingsResource, name), &userapi.UserIdentityMapping{})
 	if obj == nil {
 		return nil, err
 	}
@@ -22,7 +26,7 @@ func (c *FakeUserIdentityMappings) Get(name string) (*userapi.UserIdentityMappin
 }
 
 func (c *FakeUserIdentityMappings) Create(inObj *userapi.UserIdentityMapping) (*userapi.UserIdentityMapping, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewRootCreateAction("useridentitymappings", inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewRootCreateAction(userIdentityMappingsResource, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -31,7 +35,7 @@ func (c *FakeUserIdentityMappings) Create(inObj *userapi.UserIdentityMapping) (*
 }
 
 func (c *FakeUserIdentityMappings) Update(inObj *userapi.UserIdentityMapping) (*userapi.UserIdentityMapping, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewRootUpdateAction("useridentitymappings", inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewRootUpdateAction(userIdentityMappingsResource, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -40,6 +44,6 @@ func (c *FakeUserIdentityMappings) Update(inObj *userapi.UserIdentityMapping) (*
 }
 
 func (c *FakeUserIdentityMappings) Delete(name string) error {
-	_, err := c.Fake.Invokes(ktestclient.NewRootDeleteAction("useridentitymappings", name), &userapi.UserIdentityMapping{})
+	_, err := c.Fake.Invokes(clientgotesting.NewRootDeleteAction(userIdentityMappingsResource, name), &userapi.UserIdentityMapping{})
 	return err
 }

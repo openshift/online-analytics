@@ -3,13 +3,13 @@ package plugin
 import (
 	"testing"
 
-	"k8s.io/kubernetes/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/sets"
 
-	osapi "github.com/openshift/origin/pkg/sdn/api"
+	"github.com/openshift/origin/pkg/sdn"
 )
 
 func TestNodeVNIDMap(t *testing.T) {
-	vmap := newNodeVNIDMap()
+	vmap := newNodeVNIDMap(nil, nil)
 
 	// empty vmap
 
@@ -19,10 +19,10 @@ func TestNodeVNIDMap(t *testing.T) {
 
 	// set vnids, non-overlapping
 
-	vmap.setVNID("alpha", 1)
-	vmap.setVNID("bravo", 2)
-	vmap.setVNID("charlie", 3)
-	vmap.setVNID("delta", 4)
+	vmap.setVNID("alpha", 1, false)
+	vmap.setVNID("bravo", 2, false)
+	vmap.setVNID("charlie", 3, false)
+	vmap.setVNID("delta", 4, false)
 
 	checkExists(t, vmap, "alpha", 1)
 	checkExists(t, vmap, "bravo", 2)
@@ -71,8 +71,8 @@ func TestNodeVNIDMap(t *testing.T) {
 
 	// change vnids
 
-	vmap.setVNID("bravo", 1)
-	vmap.setVNID("delta", 2)
+	vmap.setVNID("bravo", 1, false)
+	vmap.setVNID("delta", 2, false)
 
 	checkExists(t, vmap, "bravo", 1)
 	checkExists(t, vmap, "delta", 2)
@@ -86,12 +86,12 @@ func TestNodeVNIDMap(t *testing.T) {
 
 	// overlapping vnids
 
-	vmap.setVNID("echo", 3)
-	vmap.setVNID("foxtrot", 5)
-	vmap.setVNID("golf", 1)
-	vmap.setVNID("hotel", 1)
-	vmap.setVNID("india", 1)
-	vmap.setVNID("juliet", 3)
+	vmap.setVNID("echo", 3, false)
+	vmap.setVNID("foxtrot", 5, false)
+	vmap.setVNID("golf", 1, false)
+	vmap.setVNID("hotel", 1, false)
+	vmap.setVNID("india", 1, false)
+	vmap.setVNID("juliet", 3, false)
 
 	checkExists(t, vmap, "bravo", 1)
 	checkExists(t, vmap, "delta", 2)
@@ -144,14 +144,14 @@ func TestNodeVNIDMap(t *testing.T) {
 }
 
 func checkExists(t *testing.T, vmap *nodeVNIDMap, name string, expected uint32) {
-	id, err := vmap.GetVNID(name)
+	id, err := vmap.getVNID(name)
 	if id != expected || err != nil {
 		t.Fatalf("Unexpected failure: %d, %v", id, err)
 	}
 }
 
 func checkNotExists(t *testing.T, vmap *nodeVNIDMap, name string) {
-	id, err := vmap.GetVNID(name)
+	id, err := vmap.getVNID(name)
 	if err == nil {
 		t.Fatalf("Unexpected success: %d", id)
 	}
@@ -180,7 +180,7 @@ func checkAllocatedVNIDs(t *testing.T, vmap *nodeVNIDMap, match []uint32) {
 	ids := []uint32{}
 	idSet := sets.Int{}
 	for _, id := range vmap.ids {
-		if id != osapi.GlobalVNID {
+		if id != sdn.GlobalVNID {
 			if !idSet.Has(int(id)) {
 				ids = append(ids, id)
 				idSet.Insert(int(id))

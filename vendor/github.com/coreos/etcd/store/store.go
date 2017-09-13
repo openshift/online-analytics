@@ -61,6 +61,8 @@ type Store interface {
 
 	JsonStats() []byte
 	DeleteExpiredKeys(cutoff time.Time)
+
+	HasTTLKeys() bool
 }
 
 type TTLOptionSet struct {
@@ -680,6 +682,9 @@ func (s *store) DeleteExpiredKeys(cutoff time.Time) {
 		e := newEvent(Expire, node.Path, s.CurrentIndex, node.CreatedIndex)
 		e.EtcdIndex = s.CurrentIndex
 		e.PrevNode = node.Repr(false, false, s.clock)
+		if node.IsDir() {
+			e.Node.Dir = true
+		}
 
 		callback := func(path string) { // notify function
 			// notify the watchers with deleted set true
@@ -777,4 +782,10 @@ func (s *store) Recovery(state []byte) error {
 func (s *store) JsonStats() []byte {
 	s.Stats.Watchers = uint64(s.WatcherHub.count)
 	return s.Stats.toJson()
+}
+
+func (s *store) HasTTLKeys() bool {
+	s.worldLock.RLock()
+	defer s.worldLock.RUnlock()
+	return s.ttlKeyHeap.Len() != 0
 }

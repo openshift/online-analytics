@@ -4,39 +4,39 @@ import (
 	"strings"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
 
-	"github.com/openshift/origin/pkg/project/api"
-	routeapi "github.com/openshift/origin/pkg/route/api"
+	projectapi "github.com/openshift/origin/pkg/project/apis/project"
+	routeapi "github.com/openshift/origin/pkg/route/apis/route"
 	testutil "github.com/openshift/origin/test/util"
 	testserver "github.com/openshift/origin/test/util/server"
 )
 
 func TestNamespaceLifecycleAdmission(t *testing.T) {
-	testutil.RequireEtcd(t)
-	defer testutil.DumpEtcdOnFailure(t)
-	_, clusterAdminKubeConfig, err := testserver.StartTestMaster()
+	masterConfig, clusterAdminKubeConfig, err := testserver.StartTestMaster()
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer testserver.CleanupMasterEtcd(t, masterConfig)
 	clusterAdminClient, err := testutil.GetClusterAdminClient(clusterAdminKubeConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	clusterAdminKubeClient, err := testutil.GetClusterAdminKubeClient(clusterAdminKubeConfig)
+	clusterAdminKubeClientset, err := testutil.GetClusterAdminKubeClient(clusterAdminKubeConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, ns := range []string{"default", "openshift", "openshift-infra"} {
-		if err := clusterAdminKubeClient.Namespaces().Delete(ns); err == nil {
+		if err := clusterAdminKubeClientset.Core().Namespaces().Delete(ns, nil); err == nil {
 			t.Fatalf("expected error deleting %q namespace, got none", ns)
 		}
 	}
 
 	// Create a namespace directly (not via a project)
-	ns := &kapi.Namespace{ObjectMeta: kapi.ObjectMeta{Name: "test"}}
-	ns, err = clusterAdminKubeClient.Namespaces().Create(ns)
+	ns := &kapi.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test"}}
+	ns, err = clusterAdminKubeClientset.Core().Namespaces().Create(ns)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestNamespaceLifecycleAdmission(t *testing.T) {
 	}
 	found := false
 	for _, f := range ns.Spec.Finalizers {
-		if f == api.FinalizerOrigin {
+		if f == projectapi.FinalizerOrigin {
 			found = true
 			break
 		}
@@ -56,7 +56,7 @@ func TestNamespaceLifecycleAdmission(t *testing.T) {
 
 	// Create an origin object
 	route := &routeapi.Route{
-		ObjectMeta: kapi.ObjectMeta{Name: "route"},
+		ObjectMeta: metav1.ObjectMeta{Name: "route"},
 		Spec:       routeapi.RouteSpec{To: routeapi.RouteTargetReference{Kind: "Service", Name: "test"}},
 	}
 	route, err = clusterAdminClient.Routes(ns.Name).Create(route)
@@ -65,13 +65,13 @@ func TestNamespaceLifecycleAdmission(t *testing.T) {
 	}
 
 	// Ensure the origin finalizer is added
-	ns, err = clusterAdminKubeClient.Namespaces().Get(ns.Name)
+	ns, err = clusterAdminKubeClientset.Core().Namespaces().Get(ns.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	found = false
 	for _, f := range ns.Spec.Finalizers {
-		if f == api.FinalizerOrigin {
+		if f == projectapi.FinalizerOrigin {
 			found = true
 			break
 		}
@@ -82,14 +82,14 @@ func TestNamespaceLifecycleAdmission(t *testing.T) {
 
 	// Delete the namespace
 	// We don't have to worry about racing the namespace deletion controller because we've only started the master
-	err = clusterAdminKubeClient.Namespaces().Delete(ns.Name)
+	err = clusterAdminKubeClientset.Core().Namespaces().Delete(ns.Name, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Try to create an origin object in a terminating namespace and ensure it is forbidden
 	route = &routeapi.Route{
-		ObjectMeta: kapi.ObjectMeta{Name: "route2"},
+		ObjectMeta: metav1.ObjectMeta{Name: "route2"},
 		Spec:       routeapi.RouteSpec{To: routeapi.RouteTargetReference{Kind: "Service", Name: "test"}},
 	}
 	_, err = clusterAdminClient.Routes(ns.Name).Create(route)

@@ -307,9 +307,10 @@ type CpuStats struct {
 }
 
 type PerDiskStats struct {
-	Major uint64            `json:"major"`
-	Minor uint64            `json:"minor"`
-	Stats map[string]uint64 `json:"stats"`
+	Device string            `json:"-"`
+	Major  uint64            `json:"major"`
+	Minor  uint64            `json:"minor"`
+	Stats  map[string]uint64 `json:"stats"`
 }
 
 type DiskIoStats struct {
@@ -386,31 +387,49 @@ type NetworkStats struct {
 	Tcp TcpStat `json:"tcp"`
 	// TCP6 connection stats (Established, Listen...)
 	Tcp6 TcpStat `json:"tcp6"`
+	// UDP connection stats
+	Udp UdpStat `json:"udp"`
+	// UDP6 connection stats
+	Udp6 UdpStat `json:"udp6"`
 }
 
 type TcpStat struct {
-	//Count of TCP connections in state "Established"
+	// Count of TCP connections in state "Established"
 	Established uint64
-	//Count of TCP connections in state "Syn_Sent"
+	// Count of TCP connections in state "Syn_Sent"
 	SynSent uint64
-	//Count of TCP connections in state "Syn_Recv"
+	// Count of TCP connections in state "Syn_Recv"
 	SynRecv uint64
-	//Count of TCP connections in state "Fin_Wait1"
+	// Count of TCP connections in state "Fin_Wait1"
 	FinWait1 uint64
-	//Count of TCP connections in state "Fin_Wait2"
+	// Count of TCP connections in state "Fin_Wait2"
 	FinWait2 uint64
-	//Count of TCP connections in state "Time_Wait
+	// Count of TCP connections in state "Time_Wait
 	TimeWait uint64
-	//Count of TCP connections in state "Close"
+	// Count of TCP connections in state "Close"
 	Close uint64
-	//Count of TCP connections in state "Close_Wait"
+	// Count of TCP connections in state "Close_Wait"
 	CloseWait uint64
-	//Count of TCP connections in state "Listen_Ack"
+	// Count of TCP connections in state "Listen_Ack"
 	LastAck uint64
-	//Count of TCP connections in state "Listen"
+	// Count of TCP connections in state "Listen"
 	Listen uint64
-	//Count of TCP connections in state "Closing"
+	// Count of TCP connections in state "Closing"
 	Closing uint64
+}
+
+type UdpStat struct {
+	// Count of UDP sockets in state "Listen"
+	Listen uint64
+
+	// Count of UDP packets dropped by the IP stack
+	Dropped uint64
+
+	// Count of packets Queued for Receieve
+	RxQueued uint64
+
+	// Count of packets Queued for Transmit
+	TxQueued uint64
 }
 
 type FsStats struct {
@@ -511,7 +530,7 @@ type ContainerStats struct {
 	// Task load stats
 	TaskStats LoadStats `json:"task_stats,omitempty"`
 
-	//Custom metrics from all collectors
+	// Custom metrics from all collectors
 	CustomMetrics map[string][]MetricVal `json:"custom_metrics,omitempty"`
 }
 

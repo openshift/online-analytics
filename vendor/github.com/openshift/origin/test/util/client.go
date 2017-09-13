@@ -8,21 +8,22 @@ import (
 	"path/filepath"
 	"time"
 
+	kerrs "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/util/wait"
+	restclient "k8s.io/client-go/rest"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kerrs "k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
-	"k8s.io/kubernetes/pkg/fields"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	kcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
 	"k8s.io/kubernetes/pkg/quota"
-	"k8s.io/kubernetes/pkg/util/wait"
 
 	"github.com/openshift/origin/pkg/client"
 	configapi "github.com/openshift/origin/pkg/cmd/server/api"
-	"github.com/openshift/origin/pkg/cmd/server/origin"
 	cmdutil "github.com/openshift/origin/pkg/cmd/util"
 	"github.com/openshift/origin/pkg/cmd/util/clientcmd"
 	"github.com/openshift/origin/pkg/cmd/util/tokencmd"
-	oauthapi "github.com/openshift/origin/pkg/oauth/api"
+	oauthapi "github.com/openshift/origin/pkg/oauth/apis/oauth"
 	"github.com/openshift/origin/pkg/serviceaccounts"
 )
 
@@ -35,8 +36,8 @@ func KubeConfigPath() string {
 	return filepath.Join(GetBaseDir(), "openshift.local.config", "master", "admin.kubeconfig")
 }
 
-func GetClusterAdminKubeClient(adminKubeConfigFile string) (*kclient.Client, error) {
-	c, _, err := configapi.GetKubeClient(adminKubeConfigFile, nil)
+func GetClusterAdminKubeClient(adminKubeConfigFile string) (kclientset.Interface, error) {
+	c, _, err := configapi.GetInternalKubeClient(adminKubeConfigFile, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -56,14 +57,14 @@ func GetClusterAdminClient(adminKubeConfigFile string) (*client.Client, error) {
 }
 
 func GetClusterAdminClientConfig(adminKubeConfigFile string) (*restclient.Config, error) {
-	_, conf, err := configapi.GetKubeClient(adminKubeConfigFile, nil)
+	_, conf, err := configapi.GetInternalKubeClient(adminKubeConfigFile, nil)
 	if err != nil {
 		return nil, err
 	}
 	return conf, nil
 }
 
-func GetClientForUser(clientConfig restclient.Config, username string) (*client.Client, *kclient.Client, *restclient.Config, error) {
+func GetClientForUser(clientConfig restclient.Config, username string) (*client.Client, kclientset.Interface, *restclient.Config, error) {
 	token, err := tokencmd.RequestToken(&clientConfig, nil, username, "password")
 	if err != nil {
 		return nil, nil, nil, err
@@ -72,7 +73,7 @@ func GetClientForUser(clientConfig restclient.Config, username string) (*client.
 	userClientConfig := clientcmd.AnonymousClientConfig(&clientConfig)
 	userClientConfig.BearerToken = token
 
-	kubeClient, err := kclient.New(&userClientConfig)
+	kubeClientset, err := kclientset.NewForConfig(&userClientConfig)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -82,22 +83,22 @@ func GetClientForUser(clientConfig restclient.Config, username string) (*client.
 		return nil, nil, nil, err
 	}
 
-	return osClient, kubeClient, &userClientConfig, nil
+	return osClient, kubeClientset, &userClientConfig, nil
 }
 
-func GetScopedClientForUser(adminClient *client.Client, clientConfig restclient.Config, username string, scopes []string) (*client.Client, *kclient.Client, *restclient.Config, error) {
+func GetScopedClientForUser(adminClient *client.Client, clientConfig restclient.Config, username string, scopes []string) (*client.Client, kclientset.Interface, *restclient.Config, error) {
 	// make sure the user exists
 	if _, _, _, err := GetClientForUser(clientConfig, username); err != nil {
 		return nil, nil, nil, err
 	}
-	user, err := adminClient.Users().Get(username)
+	user, err := adminClient.Users().Get(username, metav1.GetOptions{})
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	token := &oauthapi.OAuthAccessToken{
-		ObjectMeta:  kapi.ObjectMeta{Name: fmt.Sprintf("%s-token-plus-some-padding-here-to-make-the-limit-%d", username, rand.Int())},
-		ClientName:  origin.OpenShiftCLIClientID,
+		ObjectMeta:  metav1.ObjectMeta{Name: fmt.Sprintf("%s-token-plus-some-padding-here-to-make-the-limit-%d", username, rand.Int())},
+		ClientName:  "openshift-challenging-client",
 		ExpiresIn:   86400,
 		Scopes:      scopes,
 		RedirectURI: "https://127.0.0.1:12000/oauth/token/implicit",
@@ -110,7 +111,7 @@ func GetScopedClientForUser(adminClient *client.Client, clientConfig restclient.
 
 	scopedConfig := clientcmd.AnonymousClientConfig(&clientConfig)
 	scopedConfig.BearerToken = token.Name
-	kubeClient, err := kclient.New(&scopedConfig)
+	kubeClient, err := kclientset.NewForConfig(&scopedConfig)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -121,15 +122,15 @@ func GetScopedClientForUser(adminClient *client.Client, clientConfig restclient.
 	return osClient, kubeClient, &scopedConfig, nil
 }
 
-func GetClientForServiceAccount(adminClient *kclient.Client, clientConfig restclient.Config, namespace, name string) (*client.Client, *kclient.Client, *restclient.Config, error) {
-	_, err := adminClient.Namespaces().Create(&kapi.Namespace{ObjectMeta: kapi.ObjectMeta{Name: namespace}})
+func GetClientForServiceAccount(adminClient kclientset.Interface, clientConfig restclient.Config, namespace, name string) (*client.Client, *kclientset.Clientset, *restclient.Config, error) {
+	_, err := adminClient.Core().Namespaces().Create(&kapi.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}})
 	if err != nil && !kerrs.IsAlreadyExists(err) {
 		return nil, nil, nil, err
 	}
 
-	sa, err := adminClient.ServiceAccounts(namespace).Create(&kapi.ServiceAccount{ObjectMeta: kapi.ObjectMeta{Name: name}})
+	sa, err := adminClient.Core().ServiceAccounts(namespace).Create(&kapi.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: name}})
 	if kerrs.IsAlreadyExists(err) {
-		sa, err = adminClient.ServiceAccounts(namespace).Get(name)
+		sa, err = adminClient.Core().ServiceAccounts(namespace).Get(name, metav1.GetOptions{})
 	}
 	if err != nil {
 		return nil, nil, nil, err
@@ -138,7 +139,7 @@ func GetClientForServiceAccount(adminClient *kclient.Client, clientConfig restcl
 	token := ""
 	err = wait.Poll(time.Second, 30*time.Second, func() (bool, error) {
 		selector := fields.OneTermEqualSelector(kapi.SecretTypeField, string(kapi.SecretTypeServiceAccountToken))
-		secrets, err := adminClient.Secrets(namespace).List(kapi.ListOptions{FieldSelector: selector})
+		secrets, err := adminClient.Core().Secrets(namespace).List(metav1.ListOptions{FieldSelector: selector.String()})
 		if err != nil {
 			return false, err
 		}
@@ -157,7 +158,7 @@ func GetClientForServiceAccount(adminClient *kclient.Client, clientConfig restcl
 	saClientConfig := clientcmd.AnonymousClientConfig(&clientConfig)
 	saClientConfig.BearerToken = token
 
-	kubeClient, err := kclient.New(&saClientConfig)
+	kubeClientset, err := kclientset.NewForConfig(&saClientConfig)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -167,13 +168,13 @@ func GetClientForServiceAccount(adminClient *kclient.Client, clientConfig restcl
 		return nil, nil, nil, err
 	}
 
-	return osClient, kubeClient, &saClientConfig, nil
+	return osClient, kubeClientset, &saClientConfig, nil
 }
 
 // WaitForResourceQuotaSync watches given resource quota until its hard limit is updated to match the desired
 // spec or timeout occurs.
 func WaitForResourceQuotaLimitSync(
-	client kclient.ResourceQuotaInterface,
+	client kcoreclient.ResourceQuotaInterface,
 	name string,
 	hardLimit kapi.ResourceList,
 	timeout time.Duration,
@@ -184,7 +185,7 @@ func WaitForResourceQuotaLimitSync(
 
 	expectedResourceNames := quota.ResourceNames(hardLimit)
 
-	list, err := client.List(kapi.ListOptions{FieldSelector: fields.Set{"metadata.name": name}.AsSelector()})
+	list, err := client.List(metav1.ListOptions{FieldSelector: fields.Set{"metadata.name": name}.AsSelector().String()})
 	if err != nil {
 		return err
 	}
@@ -197,7 +198,7 @@ func WaitForResourceQuotaLimitSync(
 	}
 
 	rv := list.ResourceVersion
-	w, err := client.Watch(kapi.ListOptions{FieldSelector: fields.Set{"metadata.name": name}.AsSelector(), ResourceVersion: rv})
+	w, err := client.Watch(metav1.ListOptions{FieldSelector: fields.Set{"metadata.name": name}.AsSelector().String(), ResourceVersion: rv})
 	if err != nil {
 		return err
 	}

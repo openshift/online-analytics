@@ -6,23 +6,26 @@ import (
 	"sort"
 	"text/tabwriter"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kclient "k8s.io/kubernetes/pkg/client/unversioned"
+	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
+	kcoreclient "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/typed/core/internalversion"
 	"k8s.io/kubernetes/pkg/kubectl"
+	kinternalprinters "k8s.io/kubernetes/pkg/printers/internalversion"
 
 	"github.com/openshift/origin/pkg/client"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
 	deployutil "github.com/openshift/origin/pkg/deploy/util"
 )
 
-func NewDeploymentConfigHistoryViewer(oc client.Interface, kc kclient.Interface) kubectl.HistoryViewer {
-	return &DeploymentConfigHistoryViewer{dn: oc, rn: kc}
+func NewDeploymentConfigHistoryViewer(oc client.Interface, kc kclientset.Interface) kubectl.HistoryViewer {
+	return &DeploymentConfigHistoryViewer{dn: oc, rn: kc.Core()}
 }
 
 // DeploymentConfigHistoryViewer is an implementation of the kubectl HistoryViewer interface
 // for deployment configs.
 type DeploymentConfigHistoryViewer struct {
-	rn kclient.ReplicationControllersNamespacer
+	rn kcoreclient.ReplicationControllersGetter
 	dn client.DeploymentConfigsNamespacer
 }
 
@@ -30,15 +33,20 @@ var _ kubectl.HistoryViewer = &DeploymentConfigHistoryViewer{}
 
 // ViewHistory returns a description of all the history it can find for a deployment config.
 func (h *DeploymentConfigHistoryViewer) ViewHistory(namespace, name string, revision int64) (string, error) {
-	opts := kapi.ListOptions{LabelSelector: deployutil.ConfigSelector(name)}
+	opts := metav1.ListOptions{LabelSelector: deployutil.ConfigSelector(name).String()}
 	deploymentList, err := h.rn.ReplicationControllers(namespace).List(opts)
 	if err != nil {
 		return "", err
 	}
-	history := deploymentList.Items
 
 	if len(deploymentList.Items) == 0 {
 		return "No rollout history found.", nil
+	}
+
+	items := deploymentList.Items
+	history := make([]*kapi.ReplicationController, 0, len(items))
+	for i := range items {
+		history = append(history, &items[i])
 	}
 
 	// Print details of a specific revision
@@ -48,7 +56,7 @@ func (h *DeploymentConfigHistoryViewer) ViewHistory(namespace, name string, revi
 		for i := range history {
 			rc := history[i]
 
-			if deployutil.DeploymentVersionFor(&rc) == revision {
+			if deployutil.DeploymentVersionFor(rc) == revision {
 				desired = rc.Spec.Template
 				break
 			}
@@ -59,7 +67,7 @@ func (h *DeploymentConfigHistoryViewer) ViewHistory(namespace, name string, revi
 		}
 
 		buf := bytes.NewBuffer([]byte{})
-		kubectl.DescribePodTemplate(desired, buf)
+		kinternalprinters.DescribePodTemplate(desired, kinternalprinters.NewPrefixWriter(buf))
 		return buf.String(), nil
 	}
 
@@ -70,8 +78,8 @@ func (h *DeploymentConfigHistoryViewer) ViewHistory(namespace, name string, revi
 		for i := range history {
 			rc := history[i]
 
-			rev := deployutil.DeploymentVersionFor(&rc)
-			status := deployutil.DeploymentStatusFor(&rc)
+			rev := deployutil.DeploymentVersionFor(rc)
+			status := deployutil.DeploymentStatusFor(rc)
 			cause := rc.Annotations[deployapi.DeploymentStatusReasonAnnotation]
 			if len(cause) == 0 {
 				cause = "<unknown>"

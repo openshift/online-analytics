@@ -19,22 +19,48 @@ package set
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/meta"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/kubernetes/pkg/kubectl"
+	"k8s.io/kubernetes/pkg/kubectl/cmd/templates"
 	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	"k8s.io/kubernetes/pkg/kubectl/resource"
-	"k8s.io/kubernetes/pkg/runtime"
-	utilerrors "k8s.io/kubernetes/pkg/util/errors"
+	"k8s.io/kubernetes/pkg/util/i18n"
+)
+
+var (
+	resources_long = templates.LongDesc(`
+		Specify compute resource requirements (cpu, memory) for any resource that defines a pod template.  If a pod is successfully scheduled, it is guaranteed the amount of resource requested, but may burst up to its specified limits.
+
+		for each compute resource, if a limit is specified and a request is omitted, the request will default to the limit.
+
+		Possible resources include (case insensitive): %s.`)
+
+	resources_example = templates.Examples(`
+		# Set a deployments nginx container cpu limits to "200m" and memory to "512Mi"
+		kubectl set resources deployment nginx -c=nginx --limits=cpu=200m,memory=512Mi
+
+		# Set the resource request and limits for all containers in nginx
+		kubectl set resources deployment nginx --limits=cpu=200m,memory=512Mi --requests=cpu=100m,memory=256Mi
+
+		# Remove the resource requests for resources on containers in nginx
+		kubectl set resources deployment nginx --limits=cpu=0,memory=0 --requests=cpu=0,memory=0
+
+		# Print the result (in yaml format) of updating nginx container limits from a local, without hitting the server
+		kubectl set resources -f path/to/file.yaml --limits=cpu=200m,memory=512Mi --local -o yaml`)
 )
 
 // ResourcesOptions is the start of the data required to perform the operation. As new fields are added, add them here instead of
 // referencing the cmd.Flags
 type ResourcesOptions struct {
-	Filenames []string
+	resource.FilenameOptions
 
 	Mapper            meta.RESTMapper
 	Typer             runtime.ObjectTyper
@@ -55,45 +81,26 @@ type ResourcesOptions struct {
 	Requests             string
 	ResourceRequirements api.ResourceRequirements
 
-	PrintObject            func(cmd *cobra.Command, mapper meta.RESTMapper, obj runtime.Object, out io.Writer) error
+	PrintObject            func(cmd *cobra.Command, isLocal bool, mapper meta.RESTMapper, obj runtime.Object, out io.Writer) error
 	UpdatePodSpecForObject func(obj runtime.Object, fn func(*api.PodSpec) error) (bool, error)
 	Resources              []string
 }
 
-const (
-	resources_long = `Specify compute resource requirements (cpu, memory) for any resource that defines a pod template.  If a pod is successfully scheduled, it is guaranteed the amount of resource requested, but may burst up to its specified limits.
-
-for each compute resource, if a limit is specified and a request is omitted, the request will default to the limit.`
-
-	resources_example = `
-# Set a deployments nginx container cpu limits to "200m and memory to "512Mi"
-
-kubectl set resources deployment nginx -c=nginx --limits=cpu=200m,memory=512Mi
-
-# Set the resource request and limits for all containers in nginx
-
-kubectl set resources deployment nginx --limits=cpu=200m,memory=512Mi --requests=cpu=100m,memory=256Mi
-
-# Remove the resource requests for resources on containers in nginx
-
-kubectl set resources deployment nginx --limits=cpu=0,memory=0 --requests=cpu=0,memory=0
-
-# Print the result (in yaml format) of updating nginx container limits from a local, without hitting the server
-
-kubectl set resources -f path/to/file.yaml --limits=cpu=200m,memory=512Mi --local -o yaml
-`
-)
-
-func NewCmdResources(f *cmdutil.Factory, out io.Writer, errOut io.Writer) *cobra.Command {
+func NewCmdResources(f cmdutil.Factory, out io.Writer, errOut io.Writer) *cobra.Command {
 	options := &ResourcesOptions{
 		Out: out,
 		Err: errOut,
 	}
 
+	resourceTypesWithPodTemplate := []string{}
+	for _, resource := range f.SuggestedPodTemplateResources() {
+		resourceTypesWithPodTemplate = append(resourceTypesWithPodTemplate, resource.Resource)
+	}
+
 	cmd := &cobra.Command{
 		Use:     "resources (-f FILENAME | TYPE NAME)  ([--limits=LIMITS & --requests=REQUESTS]",
-		Short:   "update resource requests/limits on objects with pod templates",
-		Long:    resources_long,
+		Short:   i18n.T("Update resource requests/limits on objects with pod templates"),
+		Long:    fmt.Sprintf(resources_long, strings.Join(resourceTypesWithPodTemplate, ", ")),
 		Example: resources_example,
 		Run: func(cmd *cobra.Command, args []string) {
 			cmdutil.CheckErr(options.Complete(f, cmd, args))
@@ -105,9 +112,10 @@ func NewCmdResources(f *cmdutil.Factory, out io.Writer, errOut io.Writer) *cobra
 	cmdutil.AddPrinterFlags(cmd)
 	//usage := "Filename, directory, or URL to a file identifying the resource to get from the server"
 	//kubectl.AddJsonFilenameFlag(cmd, &options.Filenames, usage)
-	cmd.Flags().StringSliceVarP(&options.Filenames, "filename", "f", options.Filenames, "Filename, directory or URL to file to use to edit the resource")
+	usage := "identifying the resource to get from a server."
+	cmdutil.AddFilenameOptionFlags(cmd, &options.FilenameOptions, usage)
 	cmd.Flags().BoolVar(&options.All, "all", false, "select all resources in the namespace of the specified resource types")
-	cmd.Flags().StringVarP(&options.Selector, "selector", "l", "", "Selector (label query) to filter on")
+	cmd.Flags().StringVarP(&options.Selector, "selector", "l", "", "Selector (label query) to filter on, supports '=', '==', and '!='.")
 	cmd.Flags().StringVarP(&options.ContainerSelector, "containers", "c", "*", "The names of containers in the selected pod templates to change, all containers are selected by default - may use wildcards")
 	cmd.Flags().BoolVar(&options.Local, "local", false, "If true, set resources will NOT contact api-server but run locally.")
 	cmdutil.AddDryRunFlag(cmd)
@@ -117,13 +125,14 @@ func NewCmdResources(f *cmdutil.Factory, out io.Writer, errOut io.Writer) *cobra
 	return cmd
 }
 
-func (o *ResourcesOptions) Complete(f *cmdutil.Factory, cmd *cobra.Command, args []string) error {
-	o.Mapper, o.Typer = f.Object(false)
+func (o *ResourcesOptions) Complete(f cmdutil.Factory, cmd *cobra.Command, args []string) error {
+	o.Mapper, o.Typer = f.Object()
 	o.UpdatePodSpecForObject = f.UpdatePodSpecForObject
 	o.Encoder = f.JSONEncoder()
 	o.ShortOutput = cmdutil.GetFlagString(cmd, "output") == "name"
 	o.Record = cmdutil.GetRecordFlag(cmd)
-	o.ChangeCause = f.Command()
+	o.Local = cmdutil.GetFlagBool(cmd, "local")
+	o.ChangeCause = f.Command(cmd, false)
 	o.PrintObject = f.PrintObject
 	o.Cmd = cmd
 
@@ -132,12 +141,13 @@ func (o *ResourcesOptions) Complete(f *cmdutil.Factory, cmd *cobra.Command, args
 		return err
 	}
 
-	builder := resource.NewBuilder(o.Mapper, o.Typer, resource.ClientMapperFunc(f.ClientForMapping), f.Decoder(true)).
+	builder := f.NewBuilder(!o.Local).
 		ContinueOnError().
 		NamespaceParam(cmdNamespace).DefaultNamespace().
-		FilenameParam(enforceNamespace, false, o.Filenames...).
-		//FilenameParam(enforceNamespace, &o.FilenameOptions).
+		//FilenameParam(enforceNamespace, o.Filenames...).
+		FilenameParam(enforceNamespace, &o.FilenameOptions).
 		Flatten()
+
 	if !o.Local {
 		builder = builder.
 			SelectorParam(o.Selector).
@@ -168,7 +178,7 @@ func (o *ResourcesOptions) Validate() error {
 
 func (o *ResourcesOptions) Run() error {
 	allErrs := []error{}
-	patches := CalculatePatches(o.Infos, o.Encoder, func(info *resource.Info) (bool, error) {
+	patches := CalculatePatches(o.Infos, o.Encoder, func(info *resource.Info) ([]byte, error) {
 		transformed := false
 		_, err := o.UpdatePodSpecForObject(info.Object, func(spec *api.PodSpec) error {
 			containers, _ := selectContainers(spec.Containers, o.ContainerSelector)
@@ -194,7 +204,10 @@ func (o *ResourcesOptions) Run() error {
 			}
 			return nil
 		})
-		return transformed, err
+		if transformed && err == nil {
+			return runtime.Encode(o.Encoder, info.Object)
+		}
+		return nil, err
 	})
 
 	for _, patch := range patches {
@@ -211,10 +224,10 @@ func (o *ResourcesOptions) Run() error {
 		}
 
 		if o.Local || cmdutil.GetDryRunFlag(o.Cmd) {
-			return o.PrintObject(o.Cmd, o.Mapper, info.Object, o.Out)
+			return o.PrintObject(o.Cmd, o.Local, o.Mapper, info.Object, o.Out)
 		}
 
-		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, api.StrategicMergePatchType, patch.Patch)
+		obj, err := resource.NewHelper(info.Client, info.Mapping).Patch(info.Namespace, info.Name, types.StrategicMergePatchType, patch.Patch)
 		if err != nil {
 			allErrs = append(allErrs, fmt.Errorf("failed to patch limit update to pod template %v\n", err))
 			continue

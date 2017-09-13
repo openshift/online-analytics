@@ -1,9 +1,4 @@
-<!-- BEGIN MUNGE: UNVERSIONED_WARNING -->
-
-
-<!-- END MUNGE: UNVERSIONED_WARNING -->
-
-## Java Web Application with Tomcat and Sidercar Container
+## Java Web Application with Tomcat and Sidecar Container
 
 The following document describes the deployment of a Java Web application using Tomcat. Instead of packaging `war` file inside the Tomcat image or mount the `war` as a volume, we use a sidecar container as `war` file provider.
 
@@ -39,7 +34,7 @@ Generally, we have to set up a distributed file system (NFS at least) volume to 
 
 ### How To Set this Up
 
-In Kubernetes a [_Pod_](../../docs/user-guide/pods.md) is the smallest deployable unit that can be created, scheduled, and managed. It's a collocated group of containers that share an IP and storage volume.
+In Kubernetes a [_Pod_](https://kubernetes.io/docs/user-guide/pods.md) is the smallest deployable unit that can be created, scheduled, and managed. It's a collocated group of containers that share an IP and storage volume.
 
 Here is the config [javaweb.yaml](javaweb.yaml) for Java Web pod:
 
@@ -183,13 +178,6 @@ $ kubectl delete -f examples/javaweb-tomcat-sidecar/javaweb-2.yaml
 ```
 
 
-
-
-
-
-<!-- BEGIN MUNGE: IS_VERSIONED -->
-<!-- TAG IS_VERSIONED -->
-<!-- END MUNGE: IS_VERSIONED -->
 
 
 <!-- BEGIN MUNGE: GENERATED_ANALYTICS -->

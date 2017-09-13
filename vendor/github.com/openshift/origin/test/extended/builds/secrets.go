@@ -5,8 +5,10 @@ import (
 
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
+
+	kapiv1 "k8s.io/kubernetes/pkg/api/v1"
+
 	exutil "github.com/openshift/origin/test/extended/util"
-	kapi "k8s.io/kubernetes/pkg/api"
 )
 
 var _ = g.Describe("[builds][Slow] can use build secrets", func() {
@@ -46,11 +48,11 @@ var _ = g.Describe("[builds][Slow] can use build secrets", func() {
 			br.AssertSuccess()
 
 			g.By("getting the image name")
-			image, err := exutil.GetDockerImageReference(oc.REST().ImageStreams(oc.Namespace()), "test", "latest")
+			image, err := exutil.GetDockerImageReference(oc.Client().ImageStreams(oc.Namespace()), "test", "latest")
 			o.Expect(err).NotTo(o.HaveOccurred())
 
 			g.By("verifying the build secrets were available during build and not present in the output image")
-			pod := exutil.GetPodForContainer(kapi.Container{Name: "test", Image: image})
+			pod := exutil.GetPodForContainer(kapiv1.Container{Name: "test", Image: image})
 			oc.KubeFramework().TestContainerOutput("test-build-secret-source", pod, 0, []string{
 				"testsecret/secret1=secret1",
 				"testsecret/secret2=secret2",
@@ -81,11 +83,11 @@ var _ = g.Describe("[builds][Slow] can use build secrets", func() {
 			br.AssertSuccess()
 
 			g.By("getting the image name")
-			image, err := exutil.GetDockerImageReference(oc.REST().ImageStreams(oc.Namespace()), "test", "latest")
+			image, err := exutil.GetDockerImageReference(oc.Client().ImageStreams(oc.Namespace()), "test", "latest")
 			o.Expect(err).NotTo(o.HaveOccurred())
 
 			g.By("verifying the secrets are present in container output")
-			pod := exutil.GetPodForContainer(kapi.Container{Name: "test", Image: image})
+			pod := exutil.GetPodForContainer(kapiv1.Container{Name: "test", Image: image})
 			oc.KubeFramework().TestContainerOutput("test-build-secret-docker", pod, 0, []string{
 				"secret1=secret1",
 				"relative-secret2=secret2",

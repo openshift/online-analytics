@@ -22,6 +22,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/arm/compute"
 	"github.com/Azure/azure-sdk-for-go/arm/network"
 	"github.com/Azure/go-autorest/autorest"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // checkExistsFromError inspects an error and returns a true if err is nil,
@@ -38,10 +39,12 @@ func checkResourceExistsFromError(err error) (bool, error) {
 	return false, v
 }
 
-func (az *Cloud) getVirtualMachine(machineName string) (vm compute.VirtualMachine, exists bool, err error) {
+func (az *Cloud) getVirtualMachine(nodeName types.NodeName) (vm compute.VirtualMachine, exists bool, err error) {
 	var realErr error
 
-	vm, err = az.VirtualMachinesClient.Get(az.ResourceGroup, machineName, "")
+	vmName := string(nodeName)
+	az.operationPollRateLimiter.Accept()
+	vm, err = az.VirtualMachinesClient.Get(az.ResourceGroup, vmName, "")
 
 	exists, realErr = checkResourceExistsFromError(err)
 	if realErr != nil {
@@ -58,6 +61,7 @@ func (az *Cloud) getVirtualMachine(machineName string) (vm compute.VirtualMachin
 func (az *Cloud) getRouteTable() (routeTable network.RouteTable, exists bool, err error) {
 	var realErr error
 
+	az.operationPollRateLimiter.Accept()
 	routeTable, err = az.RouteTablesClient.Get(az.ResourceGroup, az.RouteTableName, "")
 
 	exists, realErr = checkResourceExistsFromError(err)
@@ -75,6 +79,7 @@ func (az *Cloud) getRouteTable() (routeTable network.RouteTable, exists bool, er
 func (az *Cloud) getSecurityGroup() (sg network.SecurityGroup, exists bool, err error) {
 	var realErr error
 
+	az.operationPollRateLimiter.Accept()
 	sg, err = az.SecurityGroupsClient.Get(az.ResourceGroup, az.SecurityGroupName, "")
 
 	exists, realErr = checkResourceExistsFromError(err)
@@ -92,6 +97,7 @@ func (az *Cloud) getSecurityGroup() (sg network.SecurityGroup, exists bool, err 
 func (az *Cloud) getAzureLoadBalancer(name string) (lb network.LoadBalancer, exists bool, err error) {
 	var realErr error
 
+	az.operationPollRateLimiter.Accept()
 	lb, err = az.LoadBalancerClient.Get(az.ResourceGroup, name, "")
 
 	exists, realErr = checkResourceExistsFromError(err)
@@ -109,6 +115,7 @@ func (az *Cloud) getAzureLoadBalancer(name string) (lb network.LoadBalancer, exi
 func (az *Cloud) getPublicIPAddress(name string) (pip network.PublicIPAddress, exists bool, err error) {
 	var realErr error
 
+	az.operationPollRateLimiter.Accept()
 	pip, err = az.PublicIPAddressesClient.Get(az.ResourceGroup, name, "")
 
 	exists, realErr = checkResourceExistsFromError(err)
@@ -121,4 +128,22 @@ func (az *Cloud) getPublicIPAddress(name string) (pip network.PublicIPAddress, e
 	}
 
 	return pip, exists, err
+}
+
+func (az *Cloud) getSubnet(virtualNetworkName string, subnetName string) (subnet network.Subnet, exists bool, err error) {
+	var realErr error
+
+	az.operationPollRateLimiter.Accept()
+	subnet, err = az.SubnetsClient.Get(az.ResourceGroup, virtualNetworkName, subnetName, "")
+
+	exists, realErr = checkResourceExistsFromError(err)
+	if realErr != nil {
+		return subnet, false, realErr
+	}
+
+	if !exists {
+		return subnet, false, nil
+	}
+
+	return subnet, exists, err
 }

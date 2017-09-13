@@ -103,7 +103,7 @@ readonly -f os::test::junit::declare_test_end
 
 # os::test::junit::check_test_counters checks that we do not have any test suites or test cases in flight
 # This function should be called at the very end of any test script using jUnit markers to make sure no error in
-# marking has occured.
+# marking has occurred.
 #
 # Globals:
 #  - NUM_OS_JUNIT_SUITES_IN_FLIGHT
@@ -143,3 +143,62 @@ function os::test::junit::reconcile_output() {
     done
 }
 readonly -f os::test::junit::reconcile_output
+
+# os::test::junit::generate_report determines which type of report is to
+# be generated and does so from the raw output of the tests.
+#
+# Globals:
+#  - JUNIT_REPORT_OUTPUT
+#  - ARTIFACT_DIR
+# Arguments:
+#  None
+# Returns:
+#  None
+function os::test::junit::generate_report() {
+    if [[ -z "${JUNIT_REPORT_OUTPUT:-}" ||
+          -n "${JUNIT_REPORT_OUTPUT:-}" && ! -s "${JUNIT_REPORT_OUTPUT:-}" ]]; then
+        # we can't generate a report
+        return
+    fi
+
+    if grep -q "=== END TEST CASE ===" "${JUNIT_REPORT_OUTPUT}"; then
+        os::test::junit::reconcile_output
+        os::test::junit::check_test_counters
+        os::test::junit::internal::generate_report "oscmd"
+    else
+        os::test::junit::internal::generate_report "gotest"
+    fi
+}
+
+# os::test::junit::internal::generate_report generats an XML jUnit
+# report for either `os::cmd` or `go test`, based on the passed
+# argument. If the `junitreport` binary is not present, it will be built.
+#
+# Globals:
+#  - JUNIT_REPORT_OUTPUT
+#  - ARTIFACT_DIR
+# Arguments:
+#  - 1: specify which type of tests command output should junitreport read
+# Returns:
+#  export JUNIT_REPORT_NUM_FAILED
+function os::test::junit::internal::generate_report() {
+    local report_type="$1"
+    os::util::ensure::built_binary_exists 'junitreport'
+
+    local report_file
+    report_file="$( mktemp "${ARTIFACT_DIR}/${report_type}_report_XXXXX" ).xml"
+    os::log::info "jUnit XML report placed at $( os::util::repository_relative_path ${report_file} )"
+    junitreport --type "${report_type}"             \
+                --suites nested                     \
+                --roots github.com/openshift/origin \
+                --output "${report_file}"           \
+                <"${JUNIT_REPORT_OUTPUT}"
+
+    local summary
+    summary=$( junitreport summarize <"${report_file}" )
+
+    JUNIT_REPORT_NUM_FAILED="$( grep -oE "[0-9]+ failed" <<<"${summary}" )"
+    export JUNIT_REPORT_NUM_FAILED
+
+    echo "${summary}"
+}

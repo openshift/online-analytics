@@ -10,7 +10,7 @@ import (
 
 	"github.com/golang/glog"
 
-	utilruntime "k8s.io/kubernetes/pkg/util/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 
 	"github.com/openshift/origin/pkg/auth/authenticator"
 	"github.com/openshift/origin/pkg/auth/oauth/handlers"
@@ -125,6 +125,9 @@ func (l *Login) handleLoginForm(w http.ResponseWriter, req *http.Request) {
 	if then := req.URL.Query().Get("then"); then != "" {
 		// TODO: sanitize 'then'
 		form.Values.Then = then
+	} else {
+		http.Redirect(w, req, "/", http.StatusFound)
+		return
 	}
 
 	form.ErrorCode = req.URL.Query().Get("reason")
@@ -152,6 +155,10 @@ func (l *Login) handleLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	then := req.FormValue("then")
+	if len(then) == 0 {
+		http.Redirect(w, req, "/", http.StatusFound)
+		return
+	}
 	username, password := req.FormValue("username"), req.FormValue("password")
 	if username == "" {
 		failed(errorCodeUserRequired, w, req)

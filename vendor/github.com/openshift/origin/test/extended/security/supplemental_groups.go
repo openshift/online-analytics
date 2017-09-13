@@ -5,11 +5,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/fsouza/go-dockerclient"
 	g "github.com/onsi/ginkgo"
 	o "github.com/onsi/gomega"
 
-	kapi "k8s.io/kubernetes/pkg/api"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kapiv1 "k8s.io/kubernetes/pkg/api/v1"
 	e2e "k8s.io/kubernetes/test/e2e/framework"
 
 	testutil "github.com/openshift/origin/test/util"
@@ -22,28 +22,12 @@ var _ = g.Describe("[security] supplemental groups", func() {
 		f = e2e.NewDefaultFramework("security-supgroups")
 	)
 
-	g.Describe("Ensure supplemental groups propagate to docker", func() {
-		g.It("should propagate requested groups to the docker host config", func() {
-			// Before running any of this test we need to first check that
-			// the docker version being used supports the supplemental groups feature
-			g.By("ensuring the feature is supported")
+	g.Describe("[Conformance]Ensure supplemental groups propagate to docker", func() {
+		g.It("should propagate requested groups to the docker host config [local]", func() {
+			g.By("getting the docker client")
 			dockerCli, err := testutil.NewDockerClient()
 			o.Expect(err).NotTo(o.HaveOccurred())
 
-			env, err := dockerCli.Version()
-			o.Expect(err).NotTo(o.HaveOccurred(), "error getting docker environment")
-			version := env.Get("Version")
-			supports, err, requiredVersion := supportsSupplementalGroups(version)
-
-			if !supports || err != nil {
-				msg := fmt.Sprintf("skipping supplemental groups test, docker version %s does not meet required version %s", version, requiredVersion)
-				if err != nil {
-					msg = fmt.Sprintf("%s - encountered error: %v", msg, err)
-				}
-				g.Skip(msg)
-			}
-
-			// on to the real test
 			fsGroup := int64(1111)
 			supGroup := int64(2222)
 
@@ -51,14 +35,14 @@ var _ = g.Describe("[security] supplemental groups", func() {
 			// so that we can check for the exact values later and not rely on SCC allocation.
 			g.By("creating a pod that requests supplemental groups")
 			submittedPod := supGroupPod(fsGroup, supGroup)
-			_, err = f.Client.Pods(f.Namespace.Name).Create(submittedPod)
+			_, err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Create(submittedPod)
 			o.Expect(err).NotTo(o.HaveOccurred())
-			defer f.Client.Pods(f.Namespace.Name).Delete(submittedPod.Name, nil)
+			defer f.ClientSet.CoreV1().Pods(f.Namespace.Name).Delete(submittedPod.Name, nil)
 
 			// we should have been admitted with the groups that we requested but if for any
 			// reason they are different we will fail.
 			g.By("retrieving the pod and ensuring groups are set")
-			retrievedPod, err := f.Client.Pods(f.Namespace.Name).Get(submittedPod.Name)
+			retrievedPod, err := f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(submittedPod.Name, metav1.GetOptions{})
 			o.Expect(err).NotTo(o.HaveOccurred())
 			o.Expect(*retrievedPod.Spec.SecurityContext.FSGroup).To(o.Equal(*submittedPod.Spec.SecurityContext.FSGroup))
 			o.Expect(retrievedPod.Spec.SecurityContext.SupplementalGroups).To(o.Equal(submittedPod.Spec.SecurityContext.SupplementalGroups))
@@ -70,7 +54,7 @@ var _ = g.Describe("[security] supplemental groups", func() {
 
 			// find the docker id of our running container.
 			g.By("finding the docker container id on the pod")
-			retrievedPod, err = f.Client.Pods(f.Namespace.Name).Get(submittedPod.Name)
+			retrievedPod, err = f.ClientSet.CoreV1().Pods(f.Namespace.Name).Get(submittedPod.Name, metav1.GetOptions{})
 			o.Expect(err).NotTo(o.HaveOccurred())
 			containerID, err := getContainerID(retrievedPod)
 			o.Expect(err).NotTo(o.HaveOccurred())
@@ -86,73 +70,18 @@ var _ = g.Describe("[security] supplemental groups", func() {
 			o.Expect(groupAdd).ToNot(o.BeEmpty(), fmt.Sprintf("groupAdd on host config was %v", groupAdd))
 
 			g.By("ensuring the groups are set")
-			o.Expect(configHasGroup(fsGroup, dockerContainer.HostConfig)).To(o.Equal(true), fmt.Sprintf("fsGroup should exist on host config: %v", groupAdd))
-			o.Expect(configHasGroup(supGroup, dockerContainer.HostConfig)).To(o.Equal(true), fmt.Sprintf("supGroup should exist on host config: %v", groupAdd))
+			group := strconv.FormatInt(fsGroup, 10)
+			o.Expect(groupAdd).To(o.ContainElement(group), fmt.Sprintf("fsGroup %v should exist on host config: %v", fsGroup, groupAdd))
+
+			group = strconv.FormatInt(supGroup, 10)
+			o.Expect(groupAdd).To(o.ContainElement(group), fmt.Sprintf("supGroup %v should exist on host config: %v", supGroup, groupAdd))
 		})
 
 	})
 })
 
-// supportsSupplementalGroups does a check on the docker version to ensure it is at least
-// 1.8.2.  This could still fail if the version does not have the /etc/groups patch
-// but it will fail when launching the pod so this is as safe as we can get.
-func supportsSupplementalGroups(dockerVersion string) (bool, error, string) {
-	parts := strings.Split(dockerVersion, ".")
-
-	var (
-		requiredMajor   = 1
-		requiredMinor   = 8
-		requiredPatch   = 2
-		requiredVersion = fmt.Sprintf("%d.%d.%d", requiredMajor, requiredMinor, requiredPatch)
-
-		major       = 0
-		minor       = 0
-		patch       = 0
-		err   error = nil
-	)
-	if len(parts) > 0 {
-		major, err = strconv.Atoi(parts[0])
-		if err != nil {
-			return false, err, requiredVersion
-		}
-	}
-
-	if len(parts) > 1 {
-		minor, err = strconv.Atoi(parts[1])
-		if err != nil {
-			return false, err, requiredVersion
-		}
-	}
-
-	if len(parts) > 2 {
-		patch, err = strconv.Atoi(parts[2])
-		if err != nil {
-			return false, err, requiredVersion
-		}
-	}
-
-	// requires at least 1.8.2
-	if major > requiredMajor || (major == requiredMajor && minor > requiredMinor) ||
-		(major == requiredMajor && minor == requiredMinor && patch >= requiredPatch) {
-		return true, nil, requiredVersion
-	}
-
-	return false, nil, requiredVersion
-}
-
-// configHasGroup is a helper to ensure that a group is in the host config's addGroups field.
-func configHasGroup(group int64, config *docker.HostConfig) bool {
-	strGroup := strconv.FormatInt(group, 10)
-	for _, g := range config.GroupAdd {
-		if g == strGroup {
-			return true
-		}
-	}
-	return false
-}
-
 // getContainerID is a helper to parse the docker container id from a status.
-func getContainerID(p *kapi.Pod) (string, error) {
+func getContainerID(p *kapiv1.Pod) (string, error) {
 	for _, status := range p.Status.ContainerStatuses {
 		if len(status.ContainerID) > 0 {
 			containerID := strings.Replace(status.ContainerID, "docker://", "", -1)
@@ -163,17 +92,17 @@ func getContainerID(p *kapi.Pod) (string, error) {
 }
 
 // supGroupPod generates the pod requesting supplemental groups.
-func supGroupPod(fsGroup int64, supGroup int64) *kapi.Pod {
-	return &kapi.Pod{
-		ObjectMeta: kapi.ObjectMeta{
+func supGroupPod(fsGroup int64, supGroup int64) *kapiv1.Pod {
+	return &kapiv1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
 			Name: "supplemental-groups",
 		},
-		Spec: kapi.PodSpec{
-			SecurityContext: &kapi.PodSecurityContext{
+		Spec: kapiv1.PodSpec{
+			SecurityContext: &kapiv1.PodSecurityContext{
 				FSGroup:            &fsGroup,
 				SupplementalGroups: []int64{supGroup},
 			},
-			Containers: []kapi.Container{
+			Containers: []kapiv1.Container{
 				{
 					Name:  "supplemental-groups",
 					Image: "openshift/origin-pod",

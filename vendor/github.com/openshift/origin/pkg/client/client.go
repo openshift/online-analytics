@@ -7,10 +7,10 @@ import (
 	"runtime"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/discovery"
+	restclient "k8s.io/client-go/rest"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/errors"
-	"k8s.io/kubernetes/pkg/client/restclient"
-	"k8s.io/kubernetes/pkg/client/typed/discovery"
 
 	"github.com/openshift/origin/pkg/api/latest"
 	"github.com/openshift/origin/pkg/version"
@@ -295,6 +295,18 @@ func (c *Client) RoleBindingRestrictions(namespace string) RoleBindingRestrictio
 	return newRoleBindingRestrictions(c, namespace)
 }
 
+func (c *Client) PodSecurityPolicyReviews(namespace string) PodSecurityPolicyReviewInterface {
+	return newPodSecurityPolicyReviews(c, namespace)
+}
+
+func (c *Client) PodSecurityPolicySelfSubjectReviews(namespace string) PodSecurityPolicySelfSubjectReviewInterface {
+	return newPodSecurityPolicySelfSubjectReviews(c, namespace)
+}
+
+func (c *Client) PodSecurityPolicySubjectReviews(namespace string) PodSecurityPolicySubjectReviewInterface {
+	return newPodSecurityPolicySubjectReviews(c, namespace)
+}
+
 // Client is an OpenShift client object
 type Client struct {
 	*restclient.RESTClient
@@ -333,7 +345,7 @@ func SetOpenShiftDefaults(config *restclient.Config) error {
 		groupVersionCopy := latest.Version
 		config.GroupVersion = &groupVersionCopy
 	}
-	if config.APIPath == "" {
+	if config.APIPath == "" || config.APIPath == "/api" {
 		config.APIPath = "/oapi"
 	}
 	if config.NegotiatedSerializer == nil {

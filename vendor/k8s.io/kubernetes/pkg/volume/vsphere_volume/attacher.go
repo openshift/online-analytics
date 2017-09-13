@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/vsphere"
 	"k8s.io/kubernetes/pkg/util/exec"
 	"k8s.io/kubernetes/pkg/util/keymutex"
@@ -60,27 +61,61 @@ func (plugin *vsphereVolumePlugin) NewAttacher() (volume.Attacher, error) {
 // Callers are responsible for retryinging on failure.
 // Callers are responsible for thread safety between concurrent attach and
 // detach operations.
-func (attacher *vsphereVMDKAttacher) Attach(spec *volume.Spec, hostName string) (string, error) {
+func (attacher *vsphereVMDKAttacher) Attach(spec *volume.Spec, nodeName types.NodeName) (string, error) {
 	volumeSource, _, err := getVolumeSource(spec)
 	if err != nil {
 		return "", err
 	}
 
-	glog.V(4).Infof("vSphere: Attach disk called for host %s", hostName)
+	glog.V(4).Infof("vSphere: Attach disk called for node %s", nodeName)
 
 	// Keeps concurrent attach operations to same host atomic
-	attachdetachMutex.LockKey(hostName)
-	defer attachdetachMutex.UnlockKey(hostName)
+	attachdetachMutex.LockKey(string(nodeName))
+	defer attachdetachMutex.UnlockKey(string(nodeName))
 
 	// vsphereCloud.AttachDisk checks if disk is already attached to host and
 	// succeeds in that case, so no need to do that separately.
-	_, diskUUID, err := attacher.vsphereVolumes.AttachDisk(volumeSource.VolumePath, hostName)
+	_, diskUUID, err := attacher.vsphereVolumes.AttachDisk(volumeSource.VolumePath, volumeSource.StoragePolicyID, nodeName)
 	if err != nil {
-		glog.Errorf("Error attaching volume %q: %+v", volumeSource.VolumePath, err)
+		glog.Errorf("Error attaching volume %q to node %q: %+v", volumeSource.VolumePath, nodeName, err)
 		return "", err
 	}
 
 	return path.Join(diskByIDPath, diskSCSIPrefix+diskUUID), nil
+}
+
+func (attacher *vsphereVMDKAttacher) VolumesAreAttached(specs []*volume.Spec, nodeName types.NodeName) (map[*volume.Spec]bool, error) {
+	volumesAttachedCheck := make(map[*volume.Spec]bool)
+	volumeSpecMap := make(map[string]*volume.Spec)
+	volumePathList := []string{}
+	for _, spec := range specs {
+		volumeSource, _, err := getVolumeSource(spec)
+		if err != nil {
+			glog.Errorf("Error getting volume (%q) source : %v", spec.Name(), err)
+			continue
+		}
+		volumePathList = append(volumePathList, volumeSource.VolumePath)
+		volumeSpecMap[volumeSource.VolumePath] = spec
+	}
+	attachedResult, err := attacher.vsphereVolumes.DisksAreAttached(volumePathList, nodeName)
+	if err != nil {
+		glog.Errorf(
+			"Error checking if volumes (%v) are attached to current node (%q). err=%v",
+			volumePathList, nodeName, err)
+		return nil, err
+	}
+
+	for volumePath, attached := range attachedResult {
+		spec := volumeSpecMap[volumePath]
+		if !attached {
+			volumesAttachedCheck[spec] = false
+			glog.V(2).Infof("VolumesAreAttached: volume %q (specName: %q) is no longer attached", volumePath, spec.Name())
+		} else {
+			volumesAttachedCheck[spec] = true
+			glog.V(2).Infof("VolumesAreAttached: volume %q (specName: %q) is attached", volumePath, spec.Name())
+		}
+	}
+	return volumesAttachedCheck, nil
 }
 
 func (attacher *vsphereVMDKAttacher) WaitForAttach(spec *volume.Spec, devicePath string, timeout time.Duration) (string, error) {
@@ -161,7 +196,8 @@ func (attacher *vsphereVMDKAttacher) MountDevice(spec *volume.Spec, devicePath s
 
 	if notMnt {
 		diskMounter := &mount.SafeFormatAndMount{Interface: mounter, Runner: exec.New()}
-		err = diskMounter.FormatAndMount(devicePath, deviceMountPath, volumeSource.FSType, options)
+		mountOptions := volume.MountOptionFromSpec(spec, options...)
+		err = diskMounter.FormatAndMount(devicePath, deviceMountPath, volumeSource.FSType, mountOptions)
 		if err != nil {
 			os.Remove(deviceMountPath)
 			return err
@@ -190,52 +226,31 @@ func (plugin *vsphereVolumePlugin) NewDetacher() (volume.Detacher, error) {
 	}, nil
 }
 
-// Detach the given device from the given host.
-func (detacher *vsphereVMDKDetacher) Detach(deviceMountPath string, hostName string) error {
+// Detach the given device from the given node.
+func (detacher *vsphereVMDKDetacher) Detach(deviceMountPath string, nodeName types.NodeName) error {
 
 	volPath := getVolPathfromDeviceMountPath(deviceMountPath)
-	attached, err := detacher.vsphereVolumes.DiskIsAttached(volPath, hostName)
+	attached, err := detacher.vsphereVolumes.DiskIsAttached(volPath, nodeName)
 	if err != nil {
 		// Log error and continue with detach
 		glog.Errorf(
 			"Error checking if volume (%q) is already attached to current node (%q). Will continue and try detach anyway. err=%v",
-			volPath, hostName, err)
+			volPath, nodeName, err)
 	}
 
 	if err == nil && !attached {
 		// Volume is already detached from node.
-		glog.Infof("detach operation was successful. volume %q is already detached from node %q.", volPath, hostName)
+		glog.Infof("detach operation was successful. volume %q is already detached from node %q.", volPath, nodeName)
 		return nil
 	}
 
-	attachdetachMutex.LockKey(hostName)
-	defer attachdetachMutex.UnlockKey(hostName)
-	if err := detacher.vsphereVolumes.DetachDisk(volPath, hostName); err != nil {
+	attachdetachMutex.LockKey(string(nodeName))
+	defer attachdetachMutex.UnlockKey(string(nodeName))
+	if err := detacher.vsphereVolumes.DetachDisk(volPath, nodeName); err != nil {
 		glog.Errorf("Error detaching volume %q: %v", volPath, err)
 		return err
 	}
 	return nil
-}
-
-func (detacher *vsphereVMDKDetacher) WaitForDetach(devicePath string, timeout time.Duration) error {
-	ticker := time.NewTicker(checkSleepDuration)
-	defer ticker.Stop()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			glog.V(5).Infof("Checking device %q is detached.", devicePath)
-			if pathExists, err := volumeutil.PathExists(devicePath); err != nil {
-				return fmt.Errorf("Error checking if device path exists: %v", err)
-			} else if !pathExists {
-				return nil
-			}
-		case <-timer.C:
-			return fmt.Errorf("Timeout reached; Device %v is still attached", devicePath)
-		}
-	}
 }
 
 func (detacher *vsphereVMDKDetacher) UnmountDevice(deviceMountPath string) error {

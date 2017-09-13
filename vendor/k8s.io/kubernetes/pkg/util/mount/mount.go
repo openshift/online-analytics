@@ -29,6 +29,8 @@ import (
 )
 
 const (
+	// Default mount command if mounter path is not specified
+	defaultMountCommand  = "mount"
 	MountsInGlobalPDPath = "mounts"
 )
 
@@ -93,8 +95,12 @@ func (mounter *SafeFormatAndMount) FormatAndMount(source string, target string, 
 }
 
 // New returns a mount.Interface for the current system.
-func New() Interface {
-	return &Mounter{}
+// It provides options to override the default mounter behavior.
+// mounterPath allows using an alternative to `/bin/mount` for mounting.
+func New(mounterPath string) Interface {
+	return &Mounter{
+		mounterPath: mounterPath,
+	}
 }
 
 // GetMountRefs finds all other references to the device referenced

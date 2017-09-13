@@ -1,7 +1,3 @@
-<!-- BEGIN MUNGE: UNVERSIONED_WARNING -->
-
-
-<!-- END MUNGE: UNVERSIONED_WARNING -->
 Meteor on Kubernetes
 ====================
 
@@ -15,7 +11,7 @@ Meteor uses MongoDB, and we will use the `GCEPersistentDisk` type of
 volume for persistent storage. Therefore, this example is only
 applicable to [Google Compute
 Engine](https://cloud.google.com/compute/). Take a look at the
-[volumes documentation](../../docs/user-guide/volumes.md) for other options.
+[volumes documentation](https://kubernetes.io/docs/user-guide/volumes.md) for other options.
 
 First, if you have not already done so:
 
@@ -40,7 +36,7 @@ wget -q -O - https://get.k8s.io | bash
 ```
 
 Please see the [Google Compute Engine getting started
-guide](../../docs/getting-started-guides/gce.md) for full
+guide](https://kubernetes.io/docs/getting-started-guides/gce.md) for full
 details and other options for starting a cluster.
 
 Build a container for your Meteor app
@@ -102,7 +98,7 @@ your app image with your project ID, and push to GCR. Replace
 
 ```
 docker tag my-meteor gcr.io/<project>/my-meteor
-gcloud docker push gcr.io/<project>/my-meteor
+gcloud docker -- push gcr.io/<project>/my-meteor
 ```
 
 Running
@@ -114,7 +110,7 @@ and make sure the `image:` points to the container you just pushed to
 the Docker Hub or GCR.
 
 We will need to provide MongoDB a persistent Kubernetes volume to
-store its data. See the [volumes documentation](../../docs/user-guide/volumes.md) for
+store its data. See the [volumes documentation](https://kubernetes.io/docs/user-guide/volumes.md) for
 options. We're going to use Google Compute Engine persistent
 disks. Create the MongoDB disk by running:
 
@@ -151,7 +147,7 @@ You will have to open up port 80 if it's not open yet in your
 environment. On Google Compute Engine, you may run the below command.
 
 ```
-gcloud compute firewall-rules create meteor-80 --allow=tcp:80 --target-tags kubernetes-minion
+gcloud compute firewall-rules create meteor-80 --allow=tcp:80 --target-tags kubernetes-node
 ```
 
 What is going on?
@@ -173,7 +169,7 @@ Here we can see the MongoDB host and port information being passed
 into the Meteor app. The `MONGO_SERVICE...` environment variables are
 set by Kubernetes, and point to the service named `mongo` specified in
 [`mongo-service.json`](mongo-service.json). See the [environment
-documentation](../../docs/user-guide/container-environment.md) for more details.
+documentation](https://kubernetes.io/docs/user-guide/container-environment.md) for more details.
 
 As you may know, Meteor uses long lasting connections, and requires
 _sticky sessions_. With Kubernetes you can scale out your app easily
@@ -181,7 +177,7 @@ with session affinity. The
 [`meteor-service.json`](meteor-service.json) file contains
 `"sessionAffinity": "ClientIP"`, which provides this for us. See the
 [service
-documentation](../../docs/user-guide/services.md#virtual-ips-and-service-proxies) for
+documentation](https://kubernetes.io/docs/user-guide/services.md#virtual-ips-and-service-proxies) for
 more information.
 
 As mentioned above, the mongo container uses a volume which is mapped
@@ -212,13 +208,6 @@ container section:
       }
     ],
 ```
-
-
-
-
-<!-- BEGIN MUNGE: IS_VERSIONED -->
-<!-- TAG IS_VERSIONED -->
-<!-- END MUNGE: IS_VERSIONED -->
 
 
 <!-- BEGIN MUNGE: GENERATED_ANALYTICS -->

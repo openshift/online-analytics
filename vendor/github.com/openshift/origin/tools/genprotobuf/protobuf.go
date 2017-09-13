@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"k8s.io/kubernetes/cmd/libs/go2idl/args"
-	"k8s.io/kubernetes/cmd/libs/go2idl/go-to-protobuf/protobuf"
+	"k8s.io/gengo/args"
+	"k8s.io/kube-gen/cmd/go-to-protobuf/protobuf"
 
 	flag "github.com/spf13/pflag"
 )
@@ -22,34 +22,42 @@ func init() {
 		filepath.Join("vendor", "k8s.io", "kubernetes", "third_party", "protobuf"),
 	}
 	g.OutputBase = sourceTree
-	g.Packages = strings.Join([]string{
-		`-k8s.io/kubernetes/pkg/util/intstr`,
-		`-k8s.io/kubernetes/pkg/api/resource`,
-		`-k8s.io/kubernetes/pkg/runtime`,
-		`-k8s.io/kubernetes/pkg/watch/versioned`,
-		`-k8s.io/kubernetes/pkg/api/unversioned`,
-		`-k8s.io/kubernetes/pkg/api/v1`,
-		`-k8s.io/kubernetes/pkg/apis/policy/v1alpha1`,
-		`-k8s.io/kubernetes/pkg/apis/extensions/v1beta1`,
-		`-k8s.io/kubernetes/pkg/apis/autoscaling/v1`,
-		`-k8s.io/kubernetes/pkg/apis/batch/v1`,
-		`-k8s.io/kubernetes/pkg/apis/batch/v2alpha1`,
-		`-k8s.io/kubernetes/pkg/apis/apps/v1alpha1`,
-		`-k8s.io/kubernetes/federation/apis/federation/v1beta1`,
 
-		`github.com/openshift/origin/pkg/authorization/api/v1`,
-		`github.com/openshift/origin/pkg/build/api/v1`,
-		`github.com/openshift/origin/pkg/deploy/api/v1`,
-		`github.com/openshift/origin/pkg/image/api/v1`,
-		`github.com/openshift/origin/pkg/oauth/api/v1`,
-		`github.com/openshift/origin/pkg/project/api/v1`,
-		`github.com/openshift/origin/pkg/quota/api/v1`,
-		`github.com/openshift/origin/pkg/route/api/v1`,
-		`github.com/openshift/origin/pkg/sdn/api/v1`,
-		`github.com/openshift/origin/pkg/security/api/v1`,
-		`github.com/openshift/origin/pkg/template/api/v1`,
-		`github.com/openshift/origin/pkg/user/api/v1`,
-	}, ",")
+	var fullPackageList []string
+
+	if len(g.Packages) > 0 {
+		// start with the predefined package list from kube's command
+		kubePackages := strings.Split(g.Packages, ",")
+		fullPackageList = make([]string, 0, len(kubePackages))
+		for _, kubePackage := range kubePackages {
+			// strip off the leading + if it exists because we want all kube packages to be prefixed with -
+			// so they're not generated
+			if strings.HasPrefix(kubePackage, "+") {
+				kubePackage = kubePackage[1:]
+			}
+			if strings.HasPrefix(kubePackage, "-") {
+				kubePackage = kubePackage[1:]
+			}
+			fullPackageList = append(fullPackageList, "-"+kubePackage)
+		}
+	}
+
+	// add the origin packages
+	fullPackageList = append(fullPackageList,
+		`github.com/openshift/origin/pkg/authorization/apis/authorization/v1`,
+		`github.com/openshift/origin/pkg/build/apis/build/v1`,
+		`github.com/openshift/origin/pkg/deploy/apis/apps/v1`,
+		`github.com/openshift/origin/pkg/image/apis/image/v1`,
+		`github.com/openshift/origin/pkg/oauth/apis/oauth/v1`,
+		`github.com/openshift/origin/pkg/project/apis/project/v1`,
+		`github.com/openshift/origin/pkg/quota/apis/quota/v1`,
+		`github.com/openshift/origin/pkg/route/apis/route/v1`,
+		`github.com/openshift/origin/pkg/sdn/apis/network/v1`,
+		`github.com/openshift/origin/pkg/security/apis/security/v1`,
+		`github.com/openshift/origin/pkg/template/apis/template/v1`,
+		`github.com/openshift/origin/pkg/user/apis/user/v1`,
+	)
+	g.Packages = strings.Join(fullPackageList, ",")
 
 	g.BindFlags(flag.CommandLine)
 }

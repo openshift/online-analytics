@@ -12,15 +12,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/distribution/digest"
 	"github.com/docker/distribution/manifest/schema1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/api/unversioned"
 
 	"github.com/openshift/origin/pkg/cmd/dockerregistry"
 	cmdutil "github.com/openshift/origin/pkg/cmd/util"
 	"github.com/openshift/origin/pkg/cmd/util/tokencmd"
-	imageapi "github.com/openshift/origin/pkg/image/api"
+	imageapi "github.com/openshift/origin/pkg/image/apis/image"
 	testutil "github.com/openshift/origin/test/util"
 	testserver "github.com/openshift/origin/test/util/server"
 )
@@ -31,6 +32,10 @@ var gzippedEmptyTar = []byte{
 	31, 139, 8, 0, 0, 9, 110, 136, 0, 255, 98, 24, 5, 163, 96, 20, 140, 88,
 	0, 8, 0, 0, 255, 255, 46, 175, 181, 239, 0, 4, 0, 0,
 }
+
+// digestSHA256GzippedEmptyTar is the canonical sha256 digest of
+// gzippedEmptyTar
+const digestSHA256GzippedEmptyTar = digest.Digest("sha256:a3ed95caeb02ffe68cdd9fd84406680ae93d633cb16422d00e8a7c22955b46d4")
 
 func runRegistry() error {
 	config := `version: 0.1
@@ -48,7 +53,7 @@ middleware:
   repository:
     - name: openshift
       options:
-        acceptschema2: false
+        acceptschema2: true
         pullthrough: true
         enforcequota: false
         projectcachettl: 1m
@@ -56,7 +61,7 @@ middleware:
   storage:
     - name: openshift
 `
-	os.Setenv("DOCKER_REGISTRY_URL", "127.0.0.1:5000")
+	os.Setenv("OPENSHIFT_DEFAULT_REGISTRY", "127.0.0.1:5000")
 
 	go dockerregistry.Execute(strings.NewReader(config))
 
@@ -125,13 +130,11 @@ func testPullThroughStatBlob(stream *imageapi.ImageStreamImport, user, token, di
 }
 
 func TestPullThroughInsecure(t *testing.T) {
-	testutil.RequireEtcd(t)
-	defer testutil.DumpEtcdOnFailure(t)
-
-	_, clusterAdminKubeConfig, err := testserver.StartTestMasterAPI()
+	masterConfig, clusterAdminKubeConfig, err := testserver.StartTestMasterAPI()
 	if err != nil {
 		t.Fatalf("error starting master: %v", err)
 	}
+	defer testserver.CleanupMasterEtcd(t, masterConfig)
 	clusterAdminClient, err := testutil.GetClusterAdminClient(clusterAdminKubeConfig)
 	if err != nil {
 		t.Fatalf("error getting cluster admin client: %v", err)
@@ -212,7 +215,7 @@ func TestPullThroughInsecure(t *testing.T) {
 	srvurl, _ := url.Parse(server.URL)
 
 	stream := imageapi.ImageStreamImport{
-		ObjectMeta: kapi.ObjectMeta{
+		ObjectMeta: metav1.ObjectMeta{
 			Namespace: testutil.Namespace(),
 			Name:      "myimagestream",
 			Annotations: map[string]string{
@@ -242,7 +245,7 @@ func TestPullThroughInsecure(t *testing.T) {
 		t.Fatalf("imported unexpected number of images (%d != 1)", len(isi.Status.Images))
 	}
 	for i, image := range isi.Status.Images {
-		if image.Status.Status != unversioned.StatusSuccess {
+		if image.Status.Status != metav1.StatusSuccess {
 			t.Fatalf("unexpected status %d: %#v", i, image.Status)
 		}
 
@@ -256,7 +259,7 @@ func TestPullThroughInsecure(t *testing.T) {
 		}
 	}
 
-	istream, err := adminClient.ImageStreams(stream.Namespace).Get(stream.Name)
+	istream, err := adminClient.ImageStreams(stream.Namespace).Get(stream.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,14 +289,14 @@ func TestPullThroughInsecure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Logf("Run testPullThroughStatBlob (%s == true)...", imageapi.InsecureRepositoryAnnotation)
+	t.Logf("Run testPullThroughStatBlob (%s == true, spec.tags[%q].importPolicy.insecure == true)...", imageapi.InsecureRepositoryAnnotation, repotag)
 	for digest := range descriptors {
 		if err := testPullThroughStatBlob(&stream, user, token, digest); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	istream, err = adminClient.ImageStreams(stream.Namespace).Get(stream.Name)
+	istream, err = adminClient.ImageStreams(stream.Namespace).Get(stream.Name, metav1.GetOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,10 +307,31 @@ func TestPullThroughInsecure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Logf("Run testPullThroughStatBlob (%s == false)...", imageapi.InsecureRepositoryAnnotation)
+	t.Logf("Run testPullThroughStatBlob (%s == false, spec.tags[%q].importPolicy.insecure == true)...", imageapi.InsecureRepositoryAnnotation, repotag)
+	for digest := range descriptors {
+		if err := testPullThroughStatBlob(&stream, user, token, digest); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	istream, err = adminClient.ImageStreams(stream.Namespace).Get(stream.Name, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tagRef := istream.Spec.Tags[repotag]
+	tagRef.ImportPolicy.Insecure = false
+	istream.Spec.Tags[repotag] = tagRef
+	_, err = adminClient.ImageStreams(istream.Namespace).Update(istream)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Run testPullThroughStatBlob (%s == false, spec.tags[%q].importPolicy.insecure == false)...", imageapi.InsecureRepositoryAnnotation, repotag)
 	for digest := range descriptors {
 		if err := testPullThroughStatBlob(&stream, user, token, digest); err == nil {
 			t.Fatal("unexpexted access to insecure blobs")
+		} else {
+			t.Logf("%#+v", err)
 		}
 	}
 }

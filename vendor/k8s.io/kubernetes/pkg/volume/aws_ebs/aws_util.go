@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/aws"
 	"k8s.io/kubernetes/pkg/volume"
@@ -50,6 +50,8 @@ func (util *AWSDiskUtil) DeleteVolume(d *awsElasticBlockStoreDeleter) error {
 
 	deleted, err := cloud.DeleteDisk(d.volumeID)
 	if err != nil {
+		// AWS cloud provider returns volume.deletedVolumeInUseError when
+		// necessary, no handling needed here.
 		glog.V(2).Infof("Error deleting EBS Disk volume %s: %v", d.volumeID, err)
 		return err
 	}
@@ -63,7 +65,7 @@ func (util *AWSDiskUtil) DeleteVolume(d *awsElasticBlockStoreDeleter) error {
 
 // CreateVolume creates an AWS EBS volume.
 // Returns: volumeID, volumeSizeGB, labels, error
-func (util *AWSDiskUtil) CreateVolume(c *awsElasticBlockStoreProvisioner) (string, int, map[string]string, error) {
+func (util *AWSDiskUtil) CreateVolume(c *awsElasticBlockStoreProvisioner) (aws.KubernetesVolumeID, int, map[string]string, error) {
 	cloud, err := getCloudProvider(c.awsElasticBlockStore.plugin.host.GetCloudProvider())
 	if err != nil {
 		return "", 0, nil, err
@@ -78,7 +80,7 @@ func (util *AWSDiskUtil) CreateVolume(c *awsElasticBlockStoreProvisioner) (strin
 	}
 	tags["Name"] = volume.GenerateVolumeName(c.options.ClusterName, c.options.PVName, 255) // AWS tags can have 255 characters
 
-	capacity := c.options.PVC.Spec.Resources.Requests[api.ResourceName(api.ResourceStorage)]
+	capacity := c.options.PVC.Spec.Resources.Requests[v1.ResourceName(v1.ResourceStorage)]
 	requestBytes := capacity.Value()
 	// AWS works with gigabytes, convert to GiB with rounding up
 	requestGB := int(volume.RoundUpSize(requestBytes, 1024*1024*1024))
@@ -89,12 +91,18 @@ func (util *AWSDiskUtil) CreateVolume(c *awsElasticBlockStoreProvisioner) (strin
 	}
 	// Apply Parameters (case-insensitive). We leave validation of
 	// the values to the cloud provider.
+	volumeOptions.ZonePresent = false
+	volumeOptions.ZonesPresent = false
 	for k, v := range c.options.Parameters {
 		switch strings.ToLower(k) {
 		case "type":
 			volumeOptions.VolumeType = v
 		case "zone":
+			volumeOptions.ZonePresent = true
 			volumeOptions.AvailabilityZone = v
+		case "zones":
+			volumeOptions.ZonesPresent = true
+			volumeOptions.AvailabilityZones = v
 		case "iopspergb":
 			volumeOptions.IOPSPerGB, err = strconv.Atoi(v)
 			if err != nil {
@@ -110,6 +118,10 @@ func (util *AWSDiskUtil) CreateVolume(c *awsElasticBlockStoreProvisioner) (strin
 		default:
 			return "", 0, nil, fmt.Errorf("invalid option %q for volume plugin %s", k, c.plugin.GetPluginName())
 		}
+	}
+
+	if volumeOptions.ZonePresent && volumeOptions.ZonesPresent {
+		return "", 0, nil, fmt.Errorf("both zone and zones StorageClass parameters must not be used at the same time")
 	}
 
 	// TODO: implement PVC.Selector parsing

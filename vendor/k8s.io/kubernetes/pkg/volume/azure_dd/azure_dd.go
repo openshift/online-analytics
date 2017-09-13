@@ -25,15 +25,16 @@ import (
 
 	"github.com/golang/glog"
 
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/azure"
-	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util/exec"
 	"k8s.io/kubernetes/pkg/util/keymutex"
 	"k8s.io/kubernetes/pkg/util/mount"
 	utilstrings "k8s.io/kubernetes/pkg/util/strings"
 	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // This is the primary entrypoint for volume plugins.
@@ -50,15 +51,21 @@ type azureDataDiskPlugin struct {
 // azure cloud provider should implement it
 type azureCloudProvider interface {
 	// Attaches the disk to the host machine.
-	AttachDisk(diskName, diskUri, vmName string, lun int32, cachingMode compute.CachingTypes) error
+	AttachDisk(diskName, diskUri string, nodeName types.NodeName, lun int32, cachingMode compute.CachingTypes) error
 	// Detaches the disk, identified by disk name or uri, from the host machine.
-	DetachDiskByName(diskName, diskUri, vmName string) error
+	DetachDiskByName(diskName, diskUri string, nodeName types.NodeName) error
+	// Check if a list of volumes are attached to the node with the specified NodeName
+	DisksAreAttached(diskNames []string, nodeName types.NodeName) (map[string]bool, error)
 	// Get the LUN number of the disk that is attached to the host
-	GetDiskLun(diskName, diskUri, vmName string) (int32, error)
+	GetDiskLun(diskName, diskUri string, nodeName types.NodeName) (int32, error)
 	// Get the next available LUN number to attach a new VHD
-	GetNextDiskLun(vmName string) (int32, error)
+	GetNextDiskLun(nodeName types.NodeName) (int32, error)
 	// InstanceID returns the cloud provider ID of the specified instance.
-	InstanceID(name string) (string, error)
+	InstanceID(nodeName types.NodeName) (string, error)
+	// Create a VHD blob
+	CreateVolume(name, storageAccount, storageType, location string, requestGB int) (string, string, int, error)
+	// Delete a VHD blob
+	DeleteVolume(name, uri string) error
 }
 
 var _ volume.VolumePlugin = &azureDataDiskPlugin{}
@@ -96,13 +103,21 @@ func (plugin *azureDataDiskPlugin) RequiresRemount() bool {
 	return false
 }
 
-func (plugin *azureDataDiskPlugin) GetAccessModes() []api.PersistentVolumeAccessMode {
-	return []api.PersistentVolumeAccessMode{
-		api.ReadWriteOnce,
+func (plugin *azureDataDiskPlugin) SupportsMountOption() bool {
+	return true
+}
+
+func (plugin *azureDataDiskPlugin) SupportsBulkVolumeVerification() bool {
+	return false
+}
+
+func (plugin *azureDataDiskPlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
+	return []v1.PersistentVolumeAccessMode{
+		v1.ReadWriteOnce,
 	}
 }
 
-func (plugin *azureDataDiskPlugin) NewMounter(spec *volume.Spec, pod *api.Pod, _ volume.VolumeOptions) (volume.Mounter, error) {
+func (plugin *azureDataDiskPlugin) NewMounter(spec *volume.Spec, pod *v1.Pod, _ volume.VolumeOptions) (volume.Mounter, error) {
 	return plugin.newMounterInternal(spec, pod.UID, plugin.host.GetMounter())
 }
 
@@ -113,11 +128,20 @@ func (plugin *azureDataDiskPlugin) newMounterInternal(spec *volume.Spec, podUID 
 	if err != nil {
 		return nil, err
 	}
-
-	fsType := *azure.FSType
+	fsType := "ext4"
+	if azure.FSType != nil {
+		fsType = *azure.FSType
+	}
+	cachingMode := v1.AzureDataDiskCachingNone
+	if azure.CachingMode != nil {
+		cachingMode = *azure.CachingMode
+	}
+	readOnly := false
+	if azure.ReadOnly != nil {
+		readOnly = *azure.ReadOnly
+	}
 	diskName := azure.DiskName
 	diskUri := azure.DataDiskURI
-	cachingMode := *azure.CachingMode
 	return &azureDiskMounter{
 		azureDisk: &azureDisk{
 			podUID:      podUID,
@@ -129,7 +153,7 @@ func (plugin *azureDataDiskPlugin) newMounterInternal(spec *volume.Spec, podUID 
 			plugin:      plugin,
 		},
 		fsType:      fsType,
-		readOnly:    *azure.ReadOnly,
+		readOnly:    readOnly,
 		diskMounter: &mount.SafeFormatAndMount{Interface: plugin.host.GetMounter(), Runner: exec.New()}}, nil
 }
 
@@ -155,10 +179,10 @@ func (plugin *azureDataDiskPlugin) ConstructVolumeSpec(volName, mountPath string
 	if err != nil {
 		return nil, err
 	}
-	azVolume := &api.Volume{
+	azVolume := &v1.Volume{
 		Name: volName,
-		VolumeSource: api.VolumeSource{
-			AzureDisk: &api.AzureDiskVolumeSource{
+		VolumeSource: v1.VolumeSource{
+			AzureDisk: &v1.AzureDiskVolumeSource{
 				DiskName: sourceName,
 			},
 		},
@@ -176,7 +200,7 @@ type azureDisk struct {
 	podUID      types.UID
 	diskName    string
 	diskUri     string
-	cachingMode api.AzureDataDiskCachingMode
+	cachingMode v1.AzureDataDiskCachingMode
 	mounter     mount.Interface
 	plugin      *azureDataDiskPlugin
 	volume.MetricsNil
@@ -200,6 +224,13 @@ func (b *azureDiskMounter) GetAttributes() volume.Attributes {
 		Managed:         !b.readOnly,
 		SupportsSELinux: true,
 	}
+}
+
+// Checks prior to mount operations to verify that the required components (binaries, etc.)
+// to mount the volume are available on the underlying node.
+// If not, it returns an error
+func (b *azureDiskMounter) CanMount() error {
+	return nil
 }
 
 // SetUp attaches the disk and bind mounts to the volume path.
@@ -271,7 +302,7 @@ func (b *azureDiskMounter) SetUpAt(dir string, fsGroup *int64) error {
 }
 
 func makeGlobalPDPath(host volume.VolumeHost, volume string) string {
-	return path.Join(host.GetPluginDir(azureDataDiskPluginName), "mounts", volume)
+	return path.Join(host.GetPluginDir(azureDataDiskPluginName), mount.MountsInGlobalPDPath, volume)
 }
 
 func (azure *azureDisk) GetPath() string {
@@ -294,6 +325,13 @@ func (c *azureDiskUnmounter) TearDown() error {
 // Unmounts the bind mount, and detaches the disk only if the PD
 // resource was the last reference to that disk on the kubelet.
 func (c *azureDiskUnmounter) TearDownAt(dir string) error {
+	if pathExists, pathErr := util.PathExists(dir); pathErr != nil {
+		return fmt.Errorf("Error checking if path exists: %v", pathErr)
+	} else if !pathExists {
+		glog.Warningf("Warning: Unmount skipped because path does not exist: %v", dir)
+		return nil
+	}
+
 	notMnt, err := c.mounter.IsLikelyNotMountPoint(dir)
 	if err != nil {
 		glog.Errorf("Error checking if mountpoint %s: %v", dir, err)
@@ -337,7 +375,7 @@ func (c *azureDiskUnmounter) TearDownAt(dir string) error {
 	return nil
 }
 
-func getVolumeSource(spec *volume.Spec) (*api.AzureDiskVolumeSource, error) {
+func getVolumeSource(spec *volume.Spec) (*v1.AzureDiskVolumeSource, error) {
 	if spec.Volume != nil && spec.Volume.AzureDisk != nil {
 		return spec.Volume.AzureDisk, nil
 	}

@@ -5,8 +5,6 @@ import (
 
 	"github.com/skynetservices/skydns/metrics"
 	"github.com/skynetservices/skydns/server"
-
-	client "k8s.io/kubernetes/pkg/client/unversioned"
 )
 
 // NewServerDefaults returns the default SkyDNS server configuration for a DNS server.
@@ -22,20 +20,21 @@ func NewServerDefaults() (*server.Config, error) {
 type Server struct {
 	Config      *server.Config
 	Services    ServiceAccessor
-	Endpoints   client.EndpointsNamespacer
+	Endpoints   EndpointsAccessor
 	MetricsName string
 
 	Stop chan struct{}
 }
 
-// NewServer creates a server from the provided config and client.
-func NewServer(config *server.Config, client *client.Client) *Server {
+// NewServer creates a server.
+func NewServer(config *server.Config, services ServiceAccessor, endpoints EndpointsAccessor, metricsName string) *Server {
 	stop := make(chan struct{})
 	return &Server{
-		Config:    config,
-		Services:  NewCachedServiceAccessor(client, stop),
-		Endpoints: client,
-		Stop:      stop,
+		Config:      config,
+		Services:    services,
+		Endpoints:   endpoints,
+		MetricsName: metricsName,
+		Stop:        stop,
 	}
 }
 

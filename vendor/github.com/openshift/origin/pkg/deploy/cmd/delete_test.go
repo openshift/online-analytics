@@ -5,17 +5,18 @@ import (
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/diff"
+	clientgotesting "k8s.io/client-go/testing"
 	kapi "k8s.io/kubernetes/pkg/api"
-	kerrors "k8s.io/kubernetes/pkg/api/errors"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	"k8s.io/kubernetes/pkg/labels"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/util/diff"
+	"k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset/fake"
 
 	"github.com/openshift/origin/pkg/client/testclient"
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
-	_ "github.com/openshift/origin/pkg/deploy/api/install"
-	deploytest "github.com/openshift/origin/pkg/deploy/api/test"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
+	_ "github.com/openshift/origin/pkg/deploy/apis/apps/install"
+	deploytest "github.com/openshift/origin/pkg/deploy/apis/apps/test"
 	deployutil "github.com/openshift/origin/pkg/deploy/util"
 )
 
@@ -33,9 +34,11 @@ func mkdeploymentlist(versions ...int64) *kapi.ReplicationControllerList {
 }
 
 func TestStop(t *testing.T) {
-	notfound := func() runtime.Object {
-		return &(kerrors.NewNotFound(kapi.Resource("DeploymentConfig"), "config").ErrStatus)
-	}
+	var (
+		deploymentConfigsResource      = schema.GroupVersionResource{Resource: "deploymentconfigs"}
+		replicationControllersResource = schema.GroupVersionResource{Resource: "replicationcontrollers"}
+		replicationControllerKind      = schema.GroupVersionKind{Kind: "ReplicationController"}
+	)
 
 	pause := func(d *deployapi.DeploymentConfig) *deployapi.DeploymentConfig {
 		d.Spec.Paused = true
@@ -56,9 +59,9 @@ func TestStop(t *testing.T) {
 		namespace string
 		name      string
 		oc        *testclient.Fake
-		kc        *ktestclient.Fake
-		expected  []ktestclient.Action
-		kexpected []ktestclient.Action
+		kc        *fake.Clientset
+		expected  []clientgotesting.Action
+		kexpected []clientgotesting.Action
 		err       bool
 	}{
 		{
@@ -66,21 +69,21 @@ func TestStop(t *testing.T) {
 			namespace: "default",
 			name:      "config",
 			oc:        testclient.NewSimpleFake(fakeDC["simple-stop"]),
-			kc:        ktestclient.NewSimpleFake(mkdeploymentlist(1)),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewUpdateAction("deploymentconfigs", "default", pause(fakeDC["simple-stop"])),
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewDeleteAction("deploymentconfigs", "default", "config"),
+			kc:        fake.NewSimpleClientset(mkdeploymentlist(1)),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewUpdateAction(deploymentConfigsResource, "default", pause(fakeDC["simple-stop"])),
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewDeleteAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"})}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-1"),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"}).String()}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-1"),
 			},
 			err: false,
 		},
@@ -89,21 +92,21 @@ func TestStop(t *testing.T) {
 			namespace: "default",
 			name:      "config",
 			oc:        testclient.NewSimpleFake(fakeDC["legacy-simple-stop"]),
-			kc:        ktestclient.NewSimpleFake(mkdeploymentlist(1)),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewUpdateAction("deploymentconfigs", "default", nil),
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewDeleteAction("deploymentconfigs", "default", "config"),
+			kc:        fake.NewSimpleClientset(mkdeploymentlist(1)),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewUpdateAction(deploymentConfigsResource, "default", nil),
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewDeleteAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"})}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-1"),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"}).String()}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-1"),
 			},
 			err: false,
 		},
@@ -112,45 +115,45 @@ func TestStop(t *testing.T) {
 			namespace: "default",
 			name:      "config",
 			oc:        testclient.NewSimpleFake(fakeDC["multi-stop"]),
-			kc:        ktestclient.NewSimpleFake(mkdeploymentlist(1, 2, 3, 4, 5)),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewUpdateAction("deploymentconfigs", "default", pause(fakeDC["multi-stop"])),
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewDeleteAction("deploymentconfigs", "default", "config"),
+			kc:        fake.NewSimpleClientset(mkdeploymentlist(1, 2, 3, 4, 5)),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewUpdateAction(deploymentConfigsResource, "default", pause(fakeDC["multi-stop"])),
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewDeleteAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"})}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-5"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-5"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-5"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-5"),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"}).String()}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-5"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-5"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-5"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-5"),
 			},
 			err: false,
 		},
@@ -159,45 +162,45 @@ func TestStop(t *testing.T) {
 			namespace: "default",
 			name:      "config",
 			oc:        testclient.NewSimpleFake(fakeDC["legacy-multi-stop"]),
-			kc:        ktestclient.NewSimpleFake(mkdeploymentlist(1, 2, 3, 4, 5)),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewUpdateAction("deploymentconfigs", "default", nil),
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewDeleteAction("deploymentconfigs", "default", "config"),
+			kc:        fake.NewSimpleClientset(mkdeploymentlist(1, 2, 3, 4, 5)),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewUpdateAction(deploymentConfigsResource, "default", nil),
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewDeleteAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"})}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-2"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-3"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-4"),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-5"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-5"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-5"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-5"),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"}).String()}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-2"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-3"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-4"),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-5"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-5"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-5"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-5"),
 			},
 			err: false,
 		},
@@ -205,19 +208,19 @@ func TestStop(t *testing.T) {
 			testName:  "no config, some deployments",
 			namespace: "default",
 			name:      "config",
-			oc:        testclient.NewSimpleFake(notfound()),
-			kc:        ktestclient.NewSimpleFake(mkdeploymentlist(1)),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
+			oc:        testclient.NewSimpleFake(),
+			kc:        fake.NewSimpleClientset(mkdeploymentlist(1)),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"})}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewListAction("replicationcontrollers", "", kapi.ListOptions{}),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewUpdateAction("replicationcontrollers", "", nil),
-				ktestclient.NewGetAction("replicationcontrollers", "", "config-1"),
-				ktestclient.NewDeleteAction("replicationcontrollers", "", "config-1"),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{LabelSelector: labels.SelectorFromSet(map[string]string{"openshift.io/deployment-config.name": "config"}).String()}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewUpdateAction(replicationControllersResource, "default", nil),
+				clientgotesting.NewGetAction(replicationControllersResource, "default", "config-1"),
+				clientgotesting.NewDeleteAction(replicationControllersResource, "default", "config-1"),
 			},
 			err: false,
 		},
@@ -225,13 +228,13 @@ func TestStop(t *testing.T) {
 			testName:  "no config, no deployments",
 			namespace: "default",
 			name:      "config",
-			oc:        testclient.NewSimpleFake(notfound()),
-			kc:        ktestclient.NewSimpleFake(&kapi.ReplicationControllerList{}),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
+			oc:        testclient.NewSimpleFake(),
+			kc:        fake.NewSimpleClientset(&kapi.ReplicationControllerList{}),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{}),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
 			},
 			err: true,
 		},
@@ -240,15 +243,15 @@ func TestStop(t *testing.T) {
 			namespace: "default",
 			name:      "config",
 			oc:        testclient.NewSimpleFake(fakeDC["no-deployments"]),
-			kc:        ktestclient.NewSimpleFake(&kapi.ReplicationControllerList{}),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewUpdateAction("deploymentconfigs", "default", pause(fakeDC["no-deployments"])),
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewDeleteAction("deploymentconfigs", "default", "config"),
+			kc:        fake.NewSimpleClientset(&kapi.ReplicationControllerList{}),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewUpdateAction(deploymentConfigsResource, "default", pause(fakeDC["no-deployments"])),
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewDeleteAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{}),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
 			},
 			err: false,
 		},
@@ -257,15 +260,15 @@ func TestStop(t *testing.T) {
 			namespace: "default",
 			name:      "config",
 			oc:        testclient.NewSimpleFake(fakeDC["legacy-no-deployments"]),
-			kc:        ktestclient.NewSimpleFake(&kapi.ReplicationControllerList{}),
-			expected: []ktestclient.Action{
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewUpdateAction("deploymentconfigs", "default", nil),
-				ktestclient.NewGetAction("deploymentconfigs", "default", "config"),
-				ktestclient.NewDeleteAction("deploymentconfigs", "default", "config"),
+			kc:        fake.NewSimpleClientset(&kapi.ReplicationControllerList{}),
+			expected: []clientgotesting.Action{
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewUpdateAction(deploymentConfigsResource, "default", nil),
+				clientgotesting.NewGetAction(deploymentConfigsResource, "default", "config"),
+				clientgotesting.NewDeleteAction(deploymentConfigsResource, "default", "config"),
 			},
-			kexpected: []ktestclient.Action{
-				ktestclient.NewListAction("replicationcontrollers", "default", kapi.ListOptions{}),
+			kexpected: []clientgotesting.Action{
+				clientgotesting.NewListAction(replicationControllersResource, replicationControllerKind, "default", metav1.ListOptions{}),
 			},
 			err: false,
 		},
@@ -288,7 +291,7 @@ func TestStop(t *testing.T) {
 		for j, actualAction := range test.oc.Actions() {
 			e, a := test.expected[j], actualAction
 			switch a.(type) {
-			case ktestclient.UpdateAction:
+			case clientgotesting.UpdateAction:
 				if e.GetVerb() != a.GetVerb() ||
 					e.GetNamespace() != a.GetNamespace() ||
 					e.GetResource() != a.GetResource() ||
@@ -315,7 +318,7 @@ func TestStop(t *testing.T) {
 			}
 
 			switch a.(type) {
-			case ktestclient.GetAction, ktestclient.DeleteAction:
+			case clientgotesting.GetAction, clientgotesting.DeleteAction:
 				if !reflect.DeepEqual(e, a) {
 					t.Errorf("%s: unexpected action[%d]: %s, expected %s", test.testName, j, a, e)
 				}

@@ -10,23 +10,29 @@ import (
 	"sync"
 	"testing"
 
+	metainternal "k8s.io/apimachinery/pkg/apis/meta/internalversion"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/apiserver/pkg/authentication/user"
+	"k8s.io/apiserver/pkg/authorization/authorizer"
+	apifilters "k8s.io/apiserver/pkg/endpoints/filters"
+	apirequest "k8s.io/apiserver/pkg/endpoints/request"
+	apiserver "k8s.io/apiserver/pkg/server"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/auth/user"
-	"k8s.io/kubernetes/pkg/util/sets"
-	"k8s.io/kubernetes/pkg/watch"
 
 	authenticationapi "github.com/openshift/origin/pkg/auth/api"
-	"github.com/openshift/origin/pkg/authorization/authorizer"
 	configapi "github.com/openshift/origin/pkg/cmd/server/api"
-	userapi "github.com/openshift/origin/pkg/user/api"
-	usercache "github.com/openshift/origin/pkg/user/cache"
+	serverhandlers "github.com/openshift/origin/pkg/cmd/server/handlers"
+	kubernetes "github.com/openshift/origin/pkg/cmd/server/kubernetes/master"
+	userapi "github.com/openshift/origin/pkg/user/apis/user"
 )
 
 type impersonateAuthorizer struct{}
 
-func (impersonateAuthorizer) Authorize(ctx kapi.Context, a authorizer.Action) (allowed bool, reason string, err error) {
-	user, exists := kapi.UserFrom(ctx)
-	if !exists {
+func (impersonateAuthorizer) Authorize(a authorizer.Attributes) (allowed bool, reason string, err error) {
+	user := a.GetUser()
+	if user == nil {
 		return false, "missing user", nil
 	}
 
@@ -63,29 +69,29 @@ func (impersonateAuthorizer) Authorize(ctx kapi.Context, a authorizer.Action) (a
 	return false, "deny by default", nil
 }
 
-func (impersonateAuthorizer) GetAllowedSubjects(ctx kapi.Context, attributes authorizer.Action) (sets.String, sets.String, error) {
+func (impersonateAuthorizer) GetAllowedSubjects(attributes authorizer.Attributes) (sets.String, sets.String, error) {
 	return nil, nil, nil
 }
 
 type groupCache struct {
 }
 
-func (*groupCache) ListGroups(ctx kapi.Context, options *kapi.ListOptions) (*userapi.GroupList, error) {
+func (*groupCache) ListGroups(ctx apirequest.Context, options *metainternal.ListOptions) (*userapi.GroupList, error) {
 	return &userapi.GroupList{}, nil
 }
-func (*groupCache) GetGroup(ctx kapi.Context, name string) (*userapi.Group, error) {
+func (*groupCache) GetGroup(ctx apirequest.Context, name string, options *metav1.GetOptions) (*userapi.Group, error) {
 	return nil, nil
 }
-func (*groupCache) CreateGroup(ctx kapi.Context, group *userapi.Group) (*userapi.Group, error) {
+func (*groupCache) CreateGroup(ctx apirequest.Context, group *userapi.Group) (*userapi.Group, error) {
 	return nil, nil
 }
-func (*groupCache) UpdateGroup(ctx kapi.Context, group *userapi.Group) (*userapi.Group, error) {
+func (*groupCache) UpdateGroup(ctx apirequest.Context, group *userapi.Group) (*userapi.Group, error) {
 	return nil, nil
 }
-func (*groupCache) DeleteGroup(ctx kapi.Context, name string) error {
+func (*groupCache) DeleteGroup(ctx apirequest.Context, name string) error {
 	return nil
 }
-func (*groupCache) WatchGroups(ctx kapi.Context, options *kapi.ListOptions) (watch.Interface, error) {
+func (*groupCache) WatchGroups(ctx apirequest.Context, options *metainternal.ListOptions) (watch.Interface, error) {
 	return watch.NewFake(), nil
 }
 
@@ -244,16 +250,15 @@ func TestImpersonationFilter(t *testing.T) {
 	}
 
 	config := MasterConfig{}
-	config.RequestContextMapper = kapi.NewRequestContextMapper()
+	config.RequestContextMapper = apirequest.NewRequestContextMapper()
 	config.Authorizer = impersonateAuthorizer{}
-	config.GroupCache = usercache.NewGroupCache(&groupCache{})
-	var ctx kapi.Context
+	var ctx apirequest.Context
 	var actualUser user.Info
 	var lock sync.Mutex
 
 	doNothingHandler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		currentCtx, _ := config.RequestContextMapper.Get(req)
-		user, exists := kapi.UserFrom(currentCtx)
+		user, exists := apirequest.UserFrom(currentCtx)
 		if !exists {
 			actualUser = nil
 			return
@@ -273,7 +278,7 @@ func TestImpersonationFilter(t *testing.T) {
 			config.RequestContextMapper.Update(req, ctx)
 			currentCtx, _ := config.RequestContextMapper.Get(req)
 
-			user, exists := kapi.UserFrom(currentCtx)
+			user, exists := apirequest.UserFrom(currentCtx)
 			if !exists {
 				actualUser = nil
 				return
@@ -283,8 +288,8 @@ func TestImpersonationFilter(t *testing.T) {
 
 			delegate.ServeHTTP(w, req)
 		})
-	}(config.impersonationFilter(doNothingHandler))
-	handler, _ = kapi.NewRequestContextFilter(config.RequestContextMapper, handler)
+	}(serverhandlers.ImpersonationFilter(doNothingHandler, config.Authorizer, fakeGroupCache{}, config.RequestContextMapper))
+	handler = apirequest.WithRequestContext(handler, config.RequestContextMapper)
 
 	server := httptest.NewServer(handler)
 	defer server.Close()
@@ -293,7 +298,7 @@ func TestImpersonationFilter(t *testing.T) {
 		func() {
 			lock.Lock()
 			defer lock.Unlock()
-			ctx = kapi.WithUser(kapi.NewContext(), tc.user)
+			ctx = apirequest.WithUser(apirequest.NewContext(), tc.user)
 		}()
 
 		req, err := http.NewRequest("GET", server.URL, nil)
@@ -320,6 +325,12 @@ func TestImpersonationFilter(t *testing.T) {
 			continue
 		}
 	}
+}
+
+type fakeGroupCache struct{}
+
+func (fakeGroupCache) GroupsFor(_ string) ([]*userapi.Group, error) {
+	return []*userapi.Group{}, nil
 }
 
 var (
@@ -361,7 +372,7 @@ var (
 // 1. oc kube resources: oc/v1.2.0 (linux/amd64) kubernetes/bc4550d
 // 2. oc openshift resources: oc/v1.1.3 (linux/amd64) openshift/b348c2f
 // 3. openshift kubectl kube resources:  openshift/v1.2.0 (linux/amd64) kubernetes/bc4550d
-// 4. openshit kubectl openshift resources: openshift/v1.1.3 (linux/amd64) openshift/b348c2f
+// 4. openshift kubectl openshift resources: openshift/v1.1.3 (linux/amd64) openshift/b348c2f
 // 5. oadm kube resources: oadm/v1.2.0 (linux/amd64) kubernetes/bc4550d
 // 6. oadm openshift resources: oadm/v1.1.3 (linux/amd64) openshift/b348c2f
 // 7. openshift cli kube resources: openshift/v1.2.0 (linux/amd64) kubernetes/bc4550d
@@ -429,7 +440,9 @@ func TestVersionSkewFilterDenyOld(t *testing.T) {
 		{UserAgentMatchRule: configapi.UserAgentMatchRule{Regex: `\w+/v1\.1\.10 \(.+/.+\) kubernetes/\w{7}`, HTTPVerbs: verbs}, RejectionMessage: "rejected for reasons!"},
 		{UserAgentMatchRule: configapi.UserAgentMatchRule{Regex: `\w+/v(?:(?:1\.1\.1)|(?:1\.0\.1)) \(.+/.+\) openshift/\w{7}`, HTTPVerbs: verbs}, RejectionMessage: "rejected for reasons!"},
 	}
-	server := httptest.NewServer(config.versionSkewFilter(doNothingHandler))
+	requestContextMapper := apirequest.NewRequestContextMapper()
+	handler := config.versionSkewFilter(doNothingHandler, requestContextMapper)
+	server := httptest.NewServer(testHandlerChain(handler, requestContextMapper))
 	defer server.Close()
 
 	testCases := []versionSkewTestCase{
@@ -476,7 +489,9 @@ func TestVersionSkewFilterDenySkewed(t *testing.T) {
 		{Regex: `\w+/` + openshiftServerVersion + ` \(.+/.+\) openshift/\w{7}`, HTTPVerbs: verbs},
 	}
 	config.Options.PolicyConfig.UserAgentMatchingConfig.DefaultRejectionMessage = "rejected for reasons!"
-	server := httptest.NewServer(config.versionSkewFilter(doNothingHandler))
+	requestContextMapper := apirequest.NewRequestContextMapper()
+	handler := config.versionSkewFilter(doNothingHandler, requestContextMapper)
+	server := httptest.NewServer(testHandlerChain(handler, requestContextMapper))
 	defer server.Close()
 
 	testCases := []versionSkewTestCase{
@@ -526,7 +541,10 @@ func TestVersionSkewFilterSkippedOnNonAPIRequest(t *testing.T) {
 		{Regex: `\w+/` + openshiftServerVersion + ` \(.+/.+\) openshift/\w{7}`, HTTPVerbs: verbs},
 	}
 	config.Options.PolicyConfig.UserAgentMatchingConfig.DefaultRejectionMessage = "rejected for reasons!"
-	server := httptest.NewServer(config.versionSkewFilter(doNothingHandler))
+
+	requestContextMapper := apirequest.NewRequestContextMapper()
+	handler := config.versionSkewFilter(doNothingHandler, requestContextMapper)
+	server := httptest.NewServer(testHandlerChain(handler, requestContextMapper))
 	defer server.Close()
 
 	testCases := []versionSkewTestCase{
@@ -560,4 +578,13 @@ func TestVersionSkewFilterSkippedOnNonAPIRequest(t *testing.T) {
 	for _, tc := range testCases {
 		tc.Run(server.URL+"/api/v1", t)
 	}
+}
+
+func testHandlerChain(handler http.Handler, contextMapper apirequest.RequestContextMapper) http.Handler {
+	kgenericconfig := apiserver.NewConfig(kapi.Codecs)
+	kgenericconfig.LegacyAPIGroupPrefixes = kubernetes.LegacyAPIGroupPrefixes
+
+	handler = apifilters.WithRequestInfo(handler, apiserver.NewRequestInfoResolver(kgenericconfig), contextMapper)
+	handler = apirequest.WithRequestContext(handler, contextMapper)
+	return handler
 }

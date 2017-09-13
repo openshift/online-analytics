@@ -1,8 +1,3 @@
-<!-- BEGIN MUNGE: UNVERSIONED_WARNING -->
-
-
-<!-- END MUNGE: UNVERSIONED_WARNING -->
-
 ## Java EE Application using WildFly and MySQL
 
 The following document describes the deployment of a Java EE application using [WildFly](http://wildfly.org) application server and MySQL database server on Kubernetes. The sample application source code is at: https://github.com/javaee-samples/javaee7-simple-sample.
@@ -13,7 +8,7 @@ https://github.com/kubernetes/kubernetes/blob/master/docs/user-guide/prereqs.md
 
 ### Start MySQL Pod
 
-In Kubernetes a [_Pod_](../../docs/user-guide/pods.md) is the smallest deployable unit that can be created, scheduled, and managed. It's a collocated group of containers that share an IP and storage volume.
+In Kubernetes a [_Pod_](https://kubernetes.io/docs/user-guide/pods.md) is the smallest deployable unit that can be created, scheduled, and managed. It's a collocated group of containers that share an IP and storage volume.
 
 Here is the config for MySQL pod: [mysql-pod.yaml](mysql-pod.yaml)
 
@@ -41,7 +36,7 @@ Wait for the status to `1/1` and `Running`.
 
 ### Start MySQL Service
 
-We are creating a [_Service_](../../docs/user-guide/services.md) to expose the TCP port of the MySQL server. A Service distributes traffic across a set of Pods. The order of Service and the targeted Pods does not matter. However Service needs to be started before any other Pods consuming the Service are started.
+We are creating a [_Service_](https://kubernetes.io/docs/user-guide/services.md) to expose the TCP port of the MySQL server. A Service distributes traffic across a set of Pods. The order of Service and the targeted Pods does not matter. However Service needs to be started before any other Pods consuming the Service are started.
 
 In this application, we will use a Kubernetes Service to provide a discoverable endpoints for the MySQL endpoint in the cluster.  MySQL service target pods with the labels `name: mysql-pod` and `context: docker-k8s-lab`.
 
@@ -59,7 +54,7 @@ kubectl create -f examples/javaee/mysql-service.yaml
 Get status of the service:
 
 ```sh
-kubectl get -w se
+kubectl get -w svc
 NAME            LABELS                                    SELECTOR                                IP(S)          PORT(S)
 kubernetes      component=apiserver,provider=kubernetes   <none>                                  10.247.0.1     443/TCP
 mysql-service   context=docker-k8s-lab,name=mysql-pod     context=docker-k8s-lab,name=mysql-pod   10.247.63.43   3306/TCP
@@ -83,7 +78,7 @@ Our service name is ``mysql-service'' and so ``MYSQL_SERVICE_SERVICE_HOST'' and 
 
 WildFly is a lightweight Java EE 7 compliant application server. It is wrapped in a Replication Controller and used as the Java EE runtime.
 
-In Kubernetes a [_Replication Controller_](../../docs/user-guide/replication-controller.md) is responsible for replicating sets of identical pods. Like a _Service_ it has a selector query which identifies the members of it's set.  Unlike a service it also has a desired number of replicas, and it will create or delete pods to ensure that the number of pods matches up with it's desired state.
+In Kubernetes a [_Replication Controller_](https://kubernetes.io/docs/user-guide/replication-controller.md) is responsible for replicating sets of identical pods. Like a _Service_ it has a selector query which identifies the members of it's set.  Unlike a service it also has a desired number of replicas, and it will create or delete pods to ensure that the number of pods matches up with it's desired state.
 
 Here is definition of the MySQL service: [wildfly-rc.yaml](wildfly-rc.yaml).
 
@@ -114,12 +109,12 @@ kubectl get -o template po wildfly-rc-w2kk5 --template={{.status.podIP}}
 10.246.1.23
 ```
 
-Log in to minion and access the application:
+Log in to node and access the application:
 
 ```sh
-vagrant ssh minion-1
+vagrant ssh node-1
 Last login: Thu Jul 16 00:24:36 2015 from 10.0.2.2
-[vagrant@kubernetes-minion-1 ~]$ curl http://10.246.1.23:8080/employees/resources/employees/
+[vagrant@kubernetes-node-1 ~]$ curl http://10.246.1.23:8080/employees/resources/employees/
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?><collection><employee><id>1</id><name>Penny</name></employee><employee><id>2</id><name>Sheldon</name></employee><employee><id>3</id><name>Amy</name></employee><employee><id>4</id><name>Leonard</name></employee><employee><id>5</id><name>Bernadette</name></employee><employee><id>6</id><name>Raj</name></employee><employee><id>7</id><name>Howard</name></employee><employee><id>8</id><name>Priya</name></employee></collection>
 ```
 
@@ -132,13 +127,6 @@ kubectl delete -f examples/javaee/mysql-pod.yaml
 kubectl delete -f examples/javaee/mysql-service.yaml
 kubectl delete -f examples/javaee/wildfly-rc.yaml
 ```
-
-
-
-
-<!-- BEGIN MUNGE: IS_VERSIONED -->
-<!-- TAG IS_VERSIONED -->
-<!-- END MUNGE: IS_VERSIONED -->
 
 
 <!-- BEGIN MUNGE: GENERATED_ANALYTICS -->

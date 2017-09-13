@@ -4,11 +4,10 @@ import (
 	"fmt"
 	"sync"
 
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/watch"
+	clientgotesting "k8s.io/client-go/testing"
 	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/apimachinery/registered"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	"k8s.io/kubernetes/pkg/runtime"
-	"k8s.io/kubernetes/pkg/watch"
 
 	_ "github.com/openshift/origin/pkg/api/install"
 	"github.com/openshift/origin/pkg/client"
@@ -18,17 +17,17 @@ import (
 // implementation. This makes faking out just the method you want to test easier.
 type Fake struct {
 	sync.RWMutex
-	actions []ktestclient.Action // these may be castable to other types, but "Action" is the minimum
+	actions []clientgotesting.Action // these may be castable to other types, but "Action" is the minimum
 
 	// ReactionChain is the list of reactors that will be attempted for every request in the order they are tried
-	ReactionChain []ktestclient.Reactor
+	ReactionChain []clientgotesting.Reactor
 	// WatchReactionChain is the list of watch reactors that will be attempted for every request in the order they are tried
-	WatchReactionChain []ktestclient.WatchReactor
+	WatchReactionChain []clientgotesting.WatchReactor
 }
 
 // NewSimpleFake returns a client that will respond with the provided objects
 func NewSimpleFake(objects ...runtime.Object) *Fake {
-	o := ktestclient.NewObjects(kapi.Scheme, kapi.Codecs.UniversalDecoder())
+	o := clientgotesting.NewObjectTracker(kapi.Scheme, kapi.Codecs.UniversalDecoder())
 	for _, obj := range objects {
 		if err := o.Add(obj); err != nil {
 			panic(err)
@@ -36,29 +35,36 @@ func NewSimpleFake(objects ...runtime.Object) *Fake {
 	}
 
 	fakeClient := &Fake{}
-	fakeClient.AddReactor("*", "*", ktestclient.ObjectReaction(o, registered.RESTMapper()))
+	fakeClient.AddReactor("*", "*", clientgotesting.ObjectReaction(o))
+
+	fakeClient.AddWatchReactor("*", clientgotesting.DefaultWatchReactor(watch.NewFake(), nil))
 
 	return fakeClient
 }
 
 // AddReactor appends a reactor to the end of the chain
-func (c *Fake) AddReactor(verb, resource string, reaction ktestclient.ReactionFunc) {
-	c.ReactionChain = append(c.ReactionChain, &ktestclient.SimpleReactor{Verb: verb, Resource: resource, Reaction: reaction})
+func (c *Fake) AddReactor(verb, resource string, reaction clientgotesting.ReactionFunc) {
+	c.ReactionChain = append(c.ReactionChain, &clientgotesting.SimpleReactor{Verb: verb, Resource: resource, Reaction: reaction})
 }
 
 // PrependReactor adds a reactor to the beginning of the chain
-func (c *Fake) PrependReactor(verb, resource string, reaction ktestclient.ReactionFunc) {
-	c.ReactionChain = append([]ktestclient.Reactor{&ktestclient.SimpleReactor{Verb: verb, Resource: resource, Reaction: reaction}}, c.ReactionChain...)
+func (c *Fake) PrependReactor(verb, resource string, reaction clientgotesting.ReactionFunc) {
+	c.ReactionChain = append([]clientgotesting.Reactor{&clientgotesting.SimpleReactor{Verb: verb, Resource: resource, Reaction: reaction}}, c.ReactionChain...)
 }
 
 // AddWatchReactor appends a reactor to the end of the chain
-func (c *Fake) AddWatchReactor(resource string, reaction ktestclient.WatchReactionFunc) {
-	c.WatchReactionChain = append(c.WatchReactionChain, &ktestclient.SimpleWatchReactor{Resource: resource, Reaction: reaction})
+func (c *Fake) AddWatchReactor(resource string, reaction clientgotesting.WatchReactionFunc) {
+	c.WatchReactionChain = append(c.WatchReactionChain, &clientgotesting.SimpleWatchReactor{Resource: resource, Reaction: reaction})
+}
+
+// PrependWatchReactor adds a reactor to the beginning of the chain.
+func (c *Fake) PrependWatchReactor(resource string, reaction clientgotesting.WatchReactionFunc) {
+	c.WatchReactionChain = append([]clientgotesting.WatchReactor{&clientgotesting.SimpleWatchReactor{Resource: resource, Reaction: reaction}}, c.WatchReactionChain...)
 }
 
 // Invokes records the provided Action and then invokes the ReactFn (if provided).
 // defaultReturnObj is expected to be of the same type a normal call would return.
-func (c *Fake) Invokes(action ktestclient.Action, defaultReturnObj runtime.Object) (runtime.Object, error) {
+func (c *Fake) Invokes(action clientgotesting.Action, defaultReturnObj runtime.Object) (runtime.Object, error) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -80,7 +86,7 @@ func (c *Fake) Invokes(action ktestclient.Action, defaultReturnObj runtime.Objec
 }
 
 // InvokesWatch records the provided Action and then invokes the ReactFn (if provided).
-func (c *Fake) InvokesWatch(action ktestclient.Action) (watch.Interface, error) {
+func (c *Fake) InvokesWatch(action clientgotesting.Action) (watch.Interface, error) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -106,15 +112,15 @@ func (c *Fake) ClearActions() {
 	c.Lock()
 	c.Unlock()
 
-	c.actions = make([]ktestclient.Action, 0)
+	c.actions = make([]clientgotesting.Action, 0)
 }
 
 // Actions returns a chronologically ordered slice fake actions called on the fake client
-func (c *Fake) Actions() []ktestclient.Action {
+func (c *Fake) Actions() []clientgotesting.Action {
 	c.RLock()
 	defer c.RUnlock()
 
-	fa := make([]ktestclient.Action, len(c.actions))
+	fa := make([]clientgotesting.Action, len(c.actions))
 	copy(fa, c.actions)
 	return fa
 }

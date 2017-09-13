@@ -20,10 +20,12 @@ import (
 	"math"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/coreos/etcd/lease/leasepb"
 	"github.com/coreos/etcd/mvcc/backend"
+	"github.com/coreos/etcd/pkg/monotime"
 )
 
 const (
@@ -33,37 +35,32 @@ const (
 
 var (
 	leaseBucketName = []byte("lease")
-	// do not use maxInt64 since it can overflow time which will add
-	// the offset of unix time (1970yr to seconds).
-	forever = time.Unix(math.MaxInt64>>1, 0)
+
+	forever = monotime.Time(math.MaxInt64)
 
 	ErrNotPrimary    = errors.New("not a primary lessor")
 	ErrLeaseNotFound = errors.New("lease not found")
 	ErrLeaseExists   = errors.New("lease already exists")
 )
 
-type LeaseID int64
-
-// RangeDeleter defines an interface with Txn and DeleteRange method.
-// We define this interface only for lessor to limit the number
-// of methods of mvcc.KV to what lessor actually needs.
-//
-// Having a minimum interface makes testing easy.
-type RangeDeleter interface {
-	// TxnBegin see comments on mvcc.KV
-	TxnBegin() int64
-	// TxnEnd see comments on mvcc.KV
-	TxnEnd(txnID int64) error
-	// TxnDeleteRange see comments on mvcc.KV
-	TxnDeleteRange(txnID int64, key, end []byte) (n, rev int64, err error)
+// TxnDelete is a TxnWrite that only permits deletes. Defined here
+// to avoid circular dependency with mvcc.
+type TxnDelete interface {
+	DeleteRange(key, end []byte) (n, rev int64)
+	End()
 }
+
+// RangeDeleter is a TxnDelete constructor.
+type RangeDeleter func() TxnDelete
+
+type LeaseID int64
 
 // Lessor owns leases. It can grant, revoke, renew and modify leases for lessee.
 type Lessor interface {
-	// SetRangeDeleter sets the RangeDeleter to the Lessor.
-	// Lessor deletes the items in the revoked or expired lease from the
-	// the set RangeDeleter.
-	SetRangeDeleter(dr RangeDeleter)
+	// SetRangeDeleter lets the lessor create TxnDeletes to the store.
+	// Lessor deletes the items in the revoked or expired lease by creating
+	// new TxnDeletes.
+	SetRangeDeleter(rd RangeDeleter)
 
 	// Grant grants a lease that expires at least after TTL seconds.
 	Grant(id LeaseID, ttl int64) (*Lease, error)
@@ -247,20 +244,14 @@ func (le *lessor) Revoke(id LeaseID) error {
 		return nil
 	}
 
-	tid := le.rd.TxnBegin()
+	txn := le.rd()
 
 	// sort keys so deletes are in same order among all members,
 	// otherwise the backened hashes will be different
-	keys := make([]string, 0, len(l.itemSet))
-	for item := range l.itemSet {
-		keys = append(keys, item.Key)
-	}
+	keys := l.Keys()
 	sort.StringSlice(keys).Sort()
 	for _, key := range keys {
-		_, _, err := le.rd.TxnDeleteRange(tid, []byte(key), nil)
-		if err != nil {
-			panic(err)
-		}
+		txn.DeleteRange([]byte(key), nil)
 	}
 
 	le.mu.Lock()
@@ -271,11 +262,7 @@ func (le *lessor) Revoke(id LeaseID) error {
 	// deleting the keys if etcdserver fails in between.
 	le.b.BatchTx().UnsafeDelete(leaseBucketName, int64ToBytes(int64(l.ID)))
 
-	err := le.rd.TxnEnd(tid)
-	if err != nil {
-		panic(err)
-	}
-
+	txn.End()
 	return nil
 }
 
@@ -366,10 +353,12 @@ func (le *lessor) Attach(id LeaseID, items []LeaseItem) error {
 		return ErrLeaseNotFound
 	}
 
+	l.mu.Lock()
 	for _, it := range items {
 		l.itemSet[it] = struct{}{}
 		le.itemMap[it] = id
 	}
+	l.mu.Unlock()
 	return nil
 }
 
@@ -391,10 +380,12 @@ func (le *lessor) Detach(id LeaseID, items []LeaseItem) error {
 		return ErrLeaseNotFound
 	}
 
+	l.mu.Lock()
 	for _, it := range items {
 		delete(l.itemSet, it)
 		delete(le.itemMap, it)
 	}
+	l.mu.Unlock()
 	return nil
 }
 
@@ -502,10 +493,12 @@ func (le *lessor) initAndRecover() {
 type Lease struct {
 	ID  LeaseID
 	ttl int64 // time to live in seconds
+	// expiry is time when lease should expire; must be 64-bit aligned.
+	expiry monotime.Time
 
+	// mu protects concurrent accesses to itemSet
+	mu      sync.RWMutex
 	itemSet map[LeaseItem]struct{}
-	// expiry time in unixnano
-	expiry  time.Time
 	revokec chan struct{}
 }
 
@@ -534,24 +527,28 @@ func (l *Lease) TTL() int64 {
 
 // refresh refreshes the expiry of the lease.
 func (l *Lease) refresh(extend time.Duration) {
-	l.expiry = time.Now().Add(extend + time.Second*time.Duration(l.ttl))
+	t := monotime.Now().Add(extend + time.Duration(l.ttl)*time.Second)
+	atomic.StoreUint64((*uint64)(&l.expiry), uint64(t))
 }
 
 // forever sets the expiry of lease to be forever.
-func (l *Lease) forever() { l.expiry = forever }
+func (l *Lease) forever() { atomic.StoreUint64((*uint64)(&l.expiry), uint64(forever)) }
 
 // Keys returns all the keys attached to the lease.
 func (l *Lease) Keys() []string {
+	l.mu.RLock()
 	keys := make([]string, 0, len(l.itemSet))
 	for k := range l.itemSet {
 		keys = append(keys, k.Key)
 	}
+	l.mu.RUnlock()
 	return keys
 }
 
 // Remaining returns the remaining time of the lease.
 func (l *Lease) Remaining() time.Duration {
-	return l.expiry.Sub(time.Now())
+	t := monotime.Time(atomic.LoadUint64((*uint64)(&l.expiry)))
+	return time.Duration(t - monotime.Now())
 }
 
 type LeaseItem struct {

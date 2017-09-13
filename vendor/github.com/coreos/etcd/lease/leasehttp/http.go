@@ -16,6 +16,8 @@ package leasehttp
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -25,20 +27,24 @@ import (
 	"github.com/coreos/etcd/lease"
 	"github.com/coreos/etcd/lease/leasepb"
 	"github.com/coreos/etcd/pkg/httputil"
-	"golang.org/x/net/context"
 )
 
 var (
 	LeasePrefix         = "/leases"
 	LeaseInternalPrefix = "/leases/internal"
+	applyTimeout        = time.Second
+	ErrLeaseHTTPTimeout = errors.New("waiting for node to catch up its applied index has timed out")
 )
 
 // NewHandler returns an http Handler for lease renewals
-func NewHandler(l lease.Lessor) http.Handler {
-	return &leaseHandler{l}
+func NewHandler(l lease.Lessor, waitch func() <-chan struct{}) http.Handler {
+	return &leaseHandler{l, waitch}
 }
 
-type leaseHandler struct{ l lease.Lessor }
+type leaseHandler struct {
+	l      lease.Lessor
+	waitch func() <-chan struct{}
+}
 
 func (h *leaseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
@@ -58,6 +64,12 @@ func (h *leaseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		lreq := pb.LeaseKeepAliveRequest{}
 		if err := lreq.Unmarshal(b); err != nil {
 			http.Error(w, "error unmarshalling request", http.StatusBadRequest)
+			return
+		}
+		select {
+		case <-h.waitch():
+		case <-time.After(applyTimeout):
+			http.Error(w, ErrLeaseHTTPTimeout.Error(), http.StatusRequestTimeout)
 			return
 		}
 		ttl, err := h.l.Renew(lease.LeaseID(lreq.ID))
@@ -84,7 +96,12 @@ func (h *leaseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "error unmarshalling request", http.StatusBadRequest)
 			return
 		}
-
+		select {
+		case <-h.waitch():
+		case <-time.After(applyTimeout):
+			http.Error(w, ErrLeaseHTTPTimeout.Error(), http.StatusRequestTimeout)
+			return
+		}
 		l := h.l.Lookup(lease.LeaseID(lreq.LeaseTimeToLiveRequest.ID))
 		if l == nil {
 			http.Error(w, lease.ErrLeaseNotFound.Error(), http.StatusNotFound)
@@ -125,23 +142,32 @@ func (h *leaseHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // RenewHTTP renews a lease at a given primary server.
 // TODO: Batch request in future?
-func RenewHTTP(id lease.LeaseID, url string, rt http.RoundTripper, timeout time.Duration) (int64, error) {
+func RenewHTTP(ctx context.Context, id lease.LeaseID, url string, rt http.RoundTripper) (int64, error) {
 	// will post lreq protobuf to leader
 	lreq, err := (&pb.LeaseKeepAliveRequest{ID: int64(id)}).Marshal()
 	if err != nil {
 		return -1, err
 	}
 
-	cc := &http.Client{Transport: rt, Timeout: timeout}
-	resp, err := cc.Post(url, "application/protobuf", bytes.NewReader(lreq))
+	cc := &http.Client{Transport: rt}
+	req, err := http.NewRequest("POST", url, bytes.NewReader(lreq))
 	if err != nil {
-		// TODO detect if leader failed and retry?
 		return -1, err
 	}
-	b, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
+	req.Header.Set("Content-Type", "application/protobuf")
+	req.Cancel = ctx.Done()
+
+	resp, err := cc.Do(req)
 	if err != nil {
 		return -1, err
+	}
+	b, err := readResponse(resp)
+	if err != nil {
+		return -1, err
+	}
+
+	if resp.StatusCode == http.StatusRequestTimeout {
+		return -1, ErrLeaseHTTPTimeout
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
@@ -176,42 +202,27 @@ func TimeToLiveHTTP(ctx context.Context, id lease.LeaseID, keys bool, url string
 	}
 	req.Header.Set("Content-Type", "application/protobuf")
 
-	cancel := httputil.RequestCanceler(req)
+	req = req.WithContext(ctx)
 
 	cc := &http.Client{Transport: rt}
 	var b []byte
-	errc := make(chan error)
-	go func() {
-		// TODO detect if leader failed and retry?
-		resp, err := cc.Do(req)
-		if err != nil {
-			errc <- err
-			return
-		}
-		b, err = ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			errc <- err
-			return
-		}
-		if resp.StatusCode == http.StatusNotFound {
-			errc <- lease.ErrLeaseNotFound
-			return
-		}
-		if resp.StatusCode != http.StatusOK {
-			errc <- fmt.Errorf("lease: unknown error(%s)", string(b))
-			return
-		}
-		errc <- nil
-	}()
-	select {
-	case derr := <-errc:
-		if derr != nil {
-			return nil, derr
-		}
-	case <-ctx.Done():
-		cancel()
-		return nil, ctx.Err()
+	// buffer errc channel so that errc don't block inside the go routinue
+	resp, err := cc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	b, err = readResponse(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusRequestTimeout {
+		return nil, ErrLeaseHTTPTimeout
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, lease.ErrLeaseNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("lease: unknown error(%s)", string(b))
 	}
 
 	lresp := &leasepb.LeaseInternalResponse{}
@@ -222,4 +233,10 @@ func TimeToLiveHTTP(ctx context.Context, id lease.LeaseID, keys bool, url string
 		return nil, fmt.Errorf("lease: renew id mismatch")
 	}
 	return lresp, nil
+}
+
+func readResponse(resp *http.Response) (b []byte, err error) {
+	b, err = ioutil.ReadAll(resp.Body)
+	httputil.GracefulClose(resp)
+	return
 }

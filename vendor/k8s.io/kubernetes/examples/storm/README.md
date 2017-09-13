@@ -1,8 +1,3 @@
-<!-- BEGIN MUNGE: UNVERSIONED_WARNING -->
-
-
-<!-- END MUNGE: UNVERSIONED_WARNING -->
-
 # Storm example
 
 Following this example, you will create a functional [Apache
@@ -27,15 +22,15 @@ Source is freely available at:
 This example assumes you have a Kubernetes cluster installed and
 running, and that you have installed the ```kubectl``` command line
 tool somewhere in your path. Please see the [getting
-started](../../docs/getting-started-guides/) for installation
+started](https://kubernetes.io/docs/getting-started-guides/) for installation
 instructions for your platform.
 
 ## Step One: Start your ZooKeeper service
 
-ZooKeeper is a distributed coordination [service](../../docs/user-guide/services.md) that Storm uses as a
+ZooKeeper is a distributed coordination [service](https://kubernetes.io/docs/user-guide/services.md) that Storm uses as a
 bootstrap and for state storage.
 
-Use the [`examples/storm/zookeeper.json`](zookeeper.json) file to create a [pod](../../docs/user-guide/pods.md) running
+Use the [`examples/storm/zookeeper.json`](zookeeper.json) file to create a [pod](https://kubernetes.io/docs/user-guide/pods.md) running
 the ZooKeeper service.
 
 ```sh
@@ -119,7 +114,7 @@ The Storm workers need both the ZooKeeper and Nimbus services to be
 running.
 
 Use the [`examples/storm/storm-worker-controller.json`](storm-worker-controller.json) file to create a
-[replication controller](../../docs/user-guide/replication-controller.md) that manages the worker pods.
+[replication controller](https://kubernetes.io/docs/user-guide/replication-controller.md) that manages the worker pods.
 
 ```sh
 $ kubectl create -f examples/storm/storm-worker-controller.json
@@ -170,13 +165,6 @@ Make sure the ZooKeeper Pod is running (use: ```kubectl get pods```).
 Make sure the Nimbus Pod is running.
 
 ```kubectl create -f storm-worker-controller.json```
-
-
-
-
-<!-- BEGIN MUNGE: IS_VERSIONED -->
-<!-- TAG IS_VERSIONED -->
-<!-- END MUNGE: IS_VERSIONED -->
 
 
 <!-- BEGIN MUNGE: GENERATED_ANALYTICS -->

@@ -1,12 +1,14 @@
 package testclient
 
 import (
-	kapi "k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/apis/extensions"
-	ktestclient "k8s.io/kubernetes/pkg/client/unversioned/testclient"
-	"k8s.io/kubernetes/pkg/watch"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
+	clientgotesting "k8s.io/client-go/testing"
+	extensionsv1beta1 "k8s.io/kubernetes/pkg/apis/extensions/v1beta1"
 
-	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapi "github.com/openshift/origin/pkg/deploy/apis/apps"
 )
 
 // FakeDeploymentConfigs implements DeploymentConfigInterface. Meant to be embedded into a struct to get a default
@@ -16,8 +18,11 @@ type FakeDeploymentConfigs struct {
 	Namespace string
 }
 
-func (c *FakeDeploymentConfigs) Get(name string) (*deployapi.DeploymentConfig, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewGetAction("deploymentconfigs", c.Namespace, name), &deployapi.DeploymentConfig{})
+var deploymentConfigsResource = schema.GroupVersionResource{Group: "", Version: "", Resource: "deploymentconfigs"}
+var deploymentConfigsKind = schema.GroupVersionKind{Group: "", Version: "", Kind: "DeploymentConfig"}
+
+func (c *FakeDeploymentConfigs) Get(name string, options metav1.GetOptions) (*deployapi.DeploymentConfig, error) {
+	obj, err := c.Fake.Invokes(clientgotesting.NewGetAction(deploymentConfigsResource, c.Namespace, name), &deployapi.DeploymentConfig{})
 	if obj == nil {
 		return nil, err
 	}
@@ -25,8 +30,8 @@ func (c *FakeDeploymentConfigs) Get(name string) (*deployapi.DeploymentConfig, e
 	return obj.(*deployapi.DeploymentConfig), err
 }
 
-func (c *FakeDeploymentConfigs) List(opts kapi.ListOptions) (*deployapi.DeploymentConfigList, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewListAction("deploymentconfigs", c.Namespace, opts), &deployapi.DeploymentConfigList{})
+func (c *FakeDeploymentConfigs) List(opts metav1.ListOptions) (*deployapi.DeploymentConfigList, error) {
+	obj, err := c.Fake.Invokes(clientgotesting.NewListAction(deploymentConfigsResource, deploymentConfigsKind, c.Namespace, opts), &deployapi.DeploymentConfigList{})
 	if obj == nil {
 		return nil, err
 	}
@@ -35,7 +40,7 @@ func (c *FakeDeploymentConfigs) List(opts kapi.ListOptions) (*deployapi.Deployme
 }
 
 func (c *FakeDeploymentConfigs) Create(inObj *deployapi.DeploymentConfig) (*deployapi.DeploymentConfig, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewCreateAction("deploymentconfigs", c.Namespace, inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewCreateAction(deploymentConfigsResource, c.Namespace, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -44,34 +49,29 @@ func (c *FakeDeploymentConfigs) Create(inObj *deployapi.DeploymentConfig) (*depl
 }
 
 func (c *FakeDeploymentConfigs) Update(inObj *deployapi.DeploymentConfig) (*deployapi.DeploymentConfig, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewUpdateAction("deploymentconfigs", c.Namespace, inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewUpdateAction(deploymentConfigsResource, c.Namespace, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
 
 	return obj.(*deployapi.DeploymentConfig), err
+}
+
+func (c *FakeDeploymentConfigs) Patch(name string, pt types.PatchType, data []byte, subresources ...string) (*deployapi.DeploymentConfig, error) {
+	return nil, nil
 }
 
 func (c *FakeDeploymentConfigs) Delete(name string) error {
-	_, err := c.Fake.Invokes(ktestclient.NewDeleteAction("deploymentconfigs", c.Namespace, name), &deployapi.DeploymentConfig{})
+	_, err := c.Fake.Invokes(clientgotesting.NewDeleteAction(deploymentConfigsResource, c.Namespace, name), &deployapi.DeploymentConfig{})
 	return err
 }
 
-func (c *FakeDeploymentConfigs) Watch(opts kapi.ListOptions) (watch.Interface, error) {
-	return c.Fake.InvokesWatch(ktestclient.NewWatchAction("deploymentconfigs", c.Namespace, opts))
-}
-
-func (c *FakeDeploymentConfigs) Generate(name string) (*deployapi.DeploymentConfig, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewGetAction("generatedeploymentconfigs", c.Namespace, name), &deployapi.DeploymentConfig{})
-	if obj == nil {
-		return nil, err
-	}
-
-	return obj.(*deployapi.DeploymentConfig), err
+func (c *FakeDeploymentConfigs) Watch(opts metav1.ListOptions) (watch.Interface, error) {
+	return c.Fake.InvokesWatch(clientgotesting.NewWatchAction(deploymentConfigsResource, c.Namespace, opts))
 }
 
 func (c *FakeDeploymentConfigs) Rollback(inObj *deployapi.DeploymentConfigRollback) (result *deployapi.DeploymentConfig, err error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewCreateAction("deploymentconfigs/rollback", c.Namespace, inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewCreateAction(deployapi.LegacySchemeGroupVersion.WithResource("deploymentconfigs/rollback"), c.Namespace, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (c *FakeDeploymentConfigs) Rollback(inObj *deployapi.DeploymentConfigRollba
 }
 
 func (c *FakeDeploymentConfigs) RollbackDeprecated(inObj *deployapi.DeploymentConfigRollback) (result *deployapi.DeploymentConfig, err error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewCreateAction("deploymentconfigrollbacks", c.Namespace, inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewCreateAction(deployapi.LegacySchemeGroupVersion.WithResource("deploymentconfigrollbacks"), c.Namespace, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -88,26 +88,26 @@ func (c *FakeDeploymentConfigs) RollbackDeprecated(inObj *deployapi.DeploymentCo
 	return obj.(*deployapi.DeploymentConfig), err
 }
 
-func (c *FakeDeploymentConfigs) GetScale(name string) (*extensions.Scale, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewGetAction("deploymentconfigs/scale", c.Namespace, name), &extensions.Scale{})
+func (c *FakeDeploymentConfigs) GetScale(name string) (*extensionsv1beta1.Scale, error) {
+	obj, err := c.Fake.Invokes(clientgotesting.NewGetAction(deployapi.LegacySchemeGroupVersion.WithResource("deploymentconfigs/scale"), c.Namespace, name), &extensionsv1beta1.Scale{})
 	if obj == nil {
 		return nil, err
 	}
 
-	return obj.(*extensions.Scale), err
+	return obj.(*extensionsv1beta1.Scale), err
 }
 
-func (c *FakeDeploymentConfigs) UpdateScale(inObj *extensions.Scale) (*extensions.Scale, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewUpdateAction("deploymentconfigs/scale", c.Namespace, inObj), inObj)
+func (c *FakeDeploymentConfigs) UpdateScale(inObj *extensionsv1beta1.Scale) (*extensionsv1beta1.Scale, error) {
+	obj, err := c.Fake.Invokes(clientgotesting.NewUpdateAction(deployapi.LegacySchemeGroupVersion.WithResource("deploymentconfigs/scale"), c.Namespace, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
 
-	return obj.(*extensions.Scale), err
+	return obj.(*extensionsv1beta1.Scale), err
 }
 
 func (c *FakeDeploymentConfigs) UpdateStatus(inObj *deployapi.DeploymentConfig) (*deployapi.DeploymentConfig, error) {
-	obj, err := c.Fake.Invokes(ktestclient.NewUpdateAction("deploymentconfigs/status", c.Namespace, inObj), inObj)
+	obj, err := c.Fake.Invokes(clientgotesting.NewUpdateAction(deployapi.LegacySchemeGroupVersion.WithResource("deploymentconfigs/status"), c.Namespace, inObj), inObj)
 	if obj == nil {
 		return nil, err
 	}
@@ -116,8 +116,8 @@ func (c *FakeDeploymentConfigs) UpdateStatus(inObj *deployapi.DeploymentConfig) 
 }
 
 func (c *FakeDeploymentConfigs) Instantiate(inObj *deployapi.DeploymentRequest) (*deployapi.DeploymentConfig, error) {
-	deployment := &deployapi.DeploymentConfig{ObjectMeta: kapi.ObjectMeta{Name: inObj.Name}}
-	obj, err := c.Fake.Invokes(ktestclient.NewUpdateAction("deploymentconfigs/instantiate", c.Namespace, deployment), deployment)
+	deployment := &deployapi.DeploymentConfig{ObjectMeta: metav1.ObjectMeta{Name: inObj.Name}}
+	obj, err := c.Fake.Invokes(clientgotesting.NewUpdateAction(deployapi.LegacySchemeGroupVersion.WithResource("deploymentconfigs/instantiate"), c.Namespace, deployment), deployment)
 	if obj == nil {
 		return nil, err
 	}

@@ -18,76 +18,96 @@ package azure
 
 import (
 	"fmt"
-	"regexp"
 
-	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/cloudprovider"
 
 	"github.com/Azure/azure-sdk-for-go/arm/compute"
+	"github.com/golang/glog"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // NodeAddresses returns the addresses of the specified instance.
-func (az *Cloud) NodeAddresses(name string) ([]api.NodeAddress, error) {
+func (az *Cloud) NodeAddresses(name types.NodeName) ([]v1.NodeAddress, error) {
 	ip, err := az.getIPForMachine(name)
+	if err != nil {
+		glog.Errorf("error: az.NodeAddresses, az.getIPForMachine(%s), err=%v", name, err)
+		return nil, err
+	}
+
+	return []v1.NodeAddress{
+		{Type: v1.NodeInternalIP, Address: ip},
+		{Type: v1.NodeHostName, Address: string(name)},
+	}, nil
+}
+
+// NodeAddressesByProviderID returns the node addresses of an instances with the specified unique providerID
+// This method will not be called from the node that is requesting this ID. i.e. metadata service
+// and other local methods cannot be used here
+func (az *Cloud) NodeAddressesByProviderID(providerID string) ([]v1.NodeAddress, error) {
+	name, err := splitProviderID(providerID)
 	if err != nil {
 		return nil, err
 	}
 
-	return []api.NodeAddress{
-		{Type: api.NodeInternalIP, Address: ip},
-		{Type: api.NodeHostName, Address: name},
-	}, nil
+	return az.NodeAddresses(name)
 }
 
 // ExternalID returns the cloud provider ID of the specified instance (deprecated).
-func (az *Cloud) ExternalID(name string) (string, error) {
+func (az *Cloud) ExternalID(name types.NodeName) (string, error) {
 	return az.InstanceID(name)
 }
 
 // InstanceID returns the cloud provider ID of the specified instance.
 // Note that if the instance does not exist or is no longer running, we must return ("", cloudprovider.InstanceNotFound)
-func (az *Cloud) InstanceID(name string) (string, error) {
-	machine, exists, err := az.getVirtualMachine(name)
+func (az *Cloud) InstanceID(name types.NodeName) (string, error) {
+	var machine compute.VirtualMachine
+	var exists bool
+	var err error
+	az.operationPollRateLimiter.Accept()
+	machine, exists, err = az.getVirtualMachine(name)
 	if err != nil {
-		return "", err
+		if az.CloudProviderBackoff {
+			glog.V(2).Infof("InstanceID(%s) backing off", name)
+			machine, exists, err = az.GetVirtualMachineWithRetry(name)
+			if err != nil {
+				glog.V(2).Infof("InstanceID(%s) abort backoff", name)
+				return "", err
+			}
+		} else {
+			return "", err
+		}
 	} else if !exists {
 		return "", cloudprovider.InstanceNotFound
 	}
 	return *machine.ID, nil
 }
 
+// InstanceTypeByProviderID returns the cloudprovider instance type of the node with the specified unique providerID
+// This method will not be called from the node that is requesting this ID. i.e. metadata service
+// and other local methods cannot be used here
+func (az *Cloud) InstanceTypeByProviderID(providerID string) (string, error) {
+	name, err := splitProviderID(providerID)
+	if err != nil {
+		return "", err
+	}
+
+	return az.InstanceID(name)
+}
+
 // InstanceType returns the type of the specified instance.
 // Note that if the instance does not exist or is no longer running, we must return ("", cloudprovider.InstanceNotFound)
 // (Implementer Note): This is used by kubelet. Kubelet will label the node. Real log from kubelet:
 //       Adding node label from cloud provider: beta.kubernetes.io/instance-type=[value]
-func (az *Cloud) InstanceType(name string) (string, error) {
+func (az *Cloud) InstanceType(name types.NodeName) (string, error) {
 	machine, exists, err := az.getVirtualMachine(name)
 	if err != nil {
+		glog.Errorf("error: az.InstanceType(%s), az.getVirtualMachine(%s) err=%v", name, name, err)
 		return "", err
 	} else if !exists {
 		return "", cloudprovider.InstanceNotFound
 	}
-	return string(machine.Properties.HardwareProfile.VMSize), nil
-}
-
-// List lists instances that match 'filter' which is a regular expression which must match the entire instance name (fqdn)
-func (az *Cloud) List(filter string) ([]string, error) {
-	allNodes, err := az.listAllNodesInResourceGroup()
-	if err != nil {
-		return nil, err
-	}
-
-	filteredNodes, err := filterNodes(allNodes, filter)
-	if err != nil {
-		return nil, err
-	}
-
-	nodeNames := make([]string, len(filteredNodes))
-	for i, v := range filteredNodes {
-		nodeNames[i] = *v.Name
-	}
-
-	return nodeNames, nil
+	return string(machine.HardwareProfile.VMSize), nil
 }
 
 // AddSSHKeyToAllInstances adds an SSH public key as a legal identity for all instances
@@ -98,15 +118,17 @@ func (az *Cloud) AddSSHKeyToAllInstances(user string, keyData []byte) error {
 
 // CurrentNodeName returns the name of the node we are currently running on
 // On most clouds (e.g. GCE) this is the hostname, so we provide the hostname
-func (az *Cloud) CurrentNodeName(hostname string) (string, error) {
-	return hostname, nil
+func (az *Cloud) CurrentNodeName(hostname string) (types.NodeName, error) {
+	return types.NodeName(hostname), nil
 }
 
 func (az *Cloud) listAllNodesInResourceGroup() ([]compute.VirtualMachine, error) {
 	allNodes := []compute.VirtualMachine{}
 
+	az.operationPollRateLimiter.Accept()
 	result, err := az.VirtualMachinesClient.List(az.ResourceGroup)
 	if err != nil {
+		glog.Errorf("error: az.listAllNodesInResourceGroup(), az.VirtualMachinesClient.List(%s), err=%v", az.ResourceGroup, err)
 		return nil, err
 	}
 
@@ -115,8 +137,10 @@ func (az *Cloud) listAllNodesInResourceGroup() ([]compute.VirtualMachine, error)
 	for morePages {
 		allNodes = append(allNodes, *result.Value...)
 
+		az.operationPollRateLimiter.Accept()
 		result, err = az.VirtualMachinesClient.ListAllNextResults(result)
 		if err != nil {
+			glog.Errorf("error: az.listAllNodesInResourceGroup(), az.VirtualMachinesClient.ListAllNextResults(%v), err=%v", result, err)
 			return nil, err
 		}
 
@@ -127,20 +151,14 @@ func (az *Cloud) listAllNodesInResourceGroup() ([]compute.VirtualMachine, error)
 
 }
 
-func filterNodes(nodes []compute.VirtualMachine, filter string) ([]compute.VirtualMachine, error) {
-	filteredNodes := []compute.VirtualMachine{}
+// mapNodeNameToVMName maps a k8s NodeName to an Azure VM Name
+// This is a simple string cast.
+func mapNodeNameToVMName(nodeName types.NodeName) string {
+	return string(nodeName)
+}
 
-	re, err := regexp.Compile(filter)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, node := range nodes {
-		// search tags
-		if re.MatchString(*node.Name) {
-			filteredNodes = append(filteredNodes, node)
-		}
-	}
-
-	return filteredNodes, nil
+// mapVMNameToNodeName maps an Azure VM Name to a k8s NodeName
+// This is a simple string cast.
+func mapVMNameToNodeName(vmName string) types.NodeName {
+	return types.NodeName(vmName)
 }

@@ -5,19 +5,13 @@
 STARTTIME=$(date +%s)
 source "$(dirname "${BASH_SOURCE}")/lib/init.sh"
 
-oc="$(os::build::find-binary oc ${OS_ROOT})"
-if [[ -z "${oc}" ]]; then
-  "${OS_ROOT}/hack/build-go.sh" cmd/oc
-  oc="$(os::build::find-binary oc ${OS_ROOT})"
-fi
+# determine the correct tag prefix
+tag_prefix="${OS_IMAGE_PREFIX:-"openshift/origin"}"
 
-function build() {
-  eval "'${oc}' ex dockerbuild $2 $1 ${OS_BUILD_IMAGE_ARGS:-}"
-}
+os::util::ensure::gopath_binary_exists imagebuilder
 
-# Build the images
-build openshift/origin-base                   "${OS_ROOT}/images/base"
-build openshift/origin-haproxy-router-base    "${OS_ROOT}/images/router/haproxy-base"
-build openshift/origin-release                "${OS_ROOT}/images/release"
+# Build the base image without the default image args
+os::build::image "${tag_prefix}-source" "${OS_ROOT}/images/source"
+os::build::image "${tag_prefix}-base"   "${OS_ROOT}/images/base"
 
 ret=$?; ENDTIME=$(date +%s); echo "$0 took $(($ENDTIME - $STARTTIME)) seconds"; exit "$ret"
