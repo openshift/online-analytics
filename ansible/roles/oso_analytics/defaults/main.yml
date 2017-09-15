@@ -1,0 +1,19 @@
+---
+# NOTE: previously was user-analytics.yaml from scripts rpm, renaming here and avoiding a file collision.
+
+# WARNING: Keep these in sync with the defaults in the templates. We want the
+# template to be independently usable so default must be defined in both.
+osoan_git_repo: "https://github.com/openshift/online-analytics.git"
+osoan_git_ref: "master"
+
+osoan_template_path: /etc/openshift-online/templates/analytics.yaml
+osoan_name: analytics
+osoan_namespace: openshift-infra
+osoan_local_endpoint_enabled: false
+osoan_user_key_strategy: name
+osoan_woopra_endpoint: http://www.woopra.com/track/ce
+osoan_woopra_enabled: true
+osoan_log_level: 0
+
+# If true, will completely uninstall app before running rest of role:
+osoan_uninstall: False

@@ -1,0 +1,23 @@
+---
+- name: "uninstall all {{ osoan_name }} components"
+  oc_obj:
+    state: absent
+    kind: "{{ item.kind }}"
+    name: "{{ item.name }}"
+    namespace: "{{ osoan_namespace }}"
+  with_items:
+    - { kind: "buildconfig", name: "{{ osoan_name }}" }
+    - { kind: "deploymentconfig", name: "{{ osoan_name }}" }
+    - { kind: "imagestream", name: "{{ osoan_name }}" }
+    - { kind: "clusterrolebinding", name: "{{ osoan_name }}" }
+    - { kind: "clusterrole", name: "{{ osoan_name }}" }
+    - { kind: "serviceaccount", name: "{{ osoan_name }}" }
+    - { kind: "service", name: "{{ osoan_name }}" }
+    # TODO: legacy app name, can be removed once this rolls out to all environments
+    - { kind: "buildconfig", name: "online-user-analytics" }
+    - { kind: "deploymentconfig", name: "online-user-analytics" }
+    - { kind: "imagestream", name: "online-user-analytics" }
+    - { kind: "clusterrolebinding", name: "user-analytics" }
+    - { kind: "clusterrole", name: "user-analytics" }
+    - { kind: "serviceaccount", name: "user-analytics" }
+    - { kind: "service", name: "user-analytics" }

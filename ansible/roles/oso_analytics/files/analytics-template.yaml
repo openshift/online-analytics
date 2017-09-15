@@ -1,0 +1,288 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: user-analytics
+parameters:
+- name: NAME
+  description: The name of the DeploymentConfig.
+  value: analytics
+
+- name: GIT_REPO
+  description: Git repository housing the Analytics Dockerfile and application code to build and deploy.
+  value: "https://github.com/openshift/online-analytics.git"
+
+- name: GIT_REF
+  description: Git branch, commit, or tag to deploy.
+  value: "master"
+
+- name: CLUSTER_NAME
+  description: Cluster name
+  value: "kubernetes"
+
+- name: MAXIMUM_QUEUE_LENGTH
+  description: The maximum number of analytic event items that are internally queued for forwarding
+  value: "1000000"
+
+- name: METRICS_POLLING_FREQUENCY
+  description: The number of seconds between metrics snapshots.
+  value: "10"
+
+- name: METRICS_PORT
+  description: Port to create a service for http metrics requests
+  value: "8080"
+
+- name: METRICS_COLLECT_RUNTIME
+  description: Enable runtime metrics
+  value: "true"
+
+- name: METRICS_COLLECT_WOOPRA
+  description: Enable woopra metrics
+  value: "true"
+
+- name: METRICS_COLLECT_QUEUE
+  description: Enable analytics queue metrics
+  value: "true"
+
+- name: LOCAL_ENDPOINT_ENABLED
+  description: Enabled local HTTP server for analytics. Useful for development and testing.
+
+- name: USER_KEY_STRATEGY
+  description: Keying strategy used to store users in Woopra. Options are [uid|name|annotation]
+
+- name: USER_KEY_ANNOTATION
+  description: If key strategy is set to annotation, this is the annotation used.
+
+- name: WOOPRA_ENABLED
+  description: Enable/disable sending data to Woopra
+
+- name: WOOPRA_ENDPOINT
+  description: The URL to send analytics to
+  value: "http://www.woopra.com/track/ce"
+
+- name: WOOPRA_DOMAIN
+  description: The URL to send analytics to
+
+- name: LOG_LEVEL
+  description: Logging level.
+  value: "0"
+
+- name: LIVENESS_PROBE_PERIOD
+  description: Liveness probe period in seconds.
+  value: "10"
+
+- name: READINESS_PROBE_PERIOD
+  description: Readiness probe period in seconds.
+  value: "10"
+
+- name: CPU_REQUEST
+  description: CPU resource request
+  value: "250m"
+
+- name: CPU_LIMIT
+  description: Memory resource request
+  value: "2"
+
+- name: MEMORY_REQUEST
+  description: Memory resource request
+  value: "614Mi"
+
+- name: MEMORY_LIMIT
+  description: Memory resource limit
+  value: "1Gi"
+
+objects:
+
+- apiVersion: v1
+  kind: ClusterRole
+  metadata:
+    annotations:
+      authorization.openshift.io/system-only: "true"
+    name: user-analytics
+  rules:
+  - resources:
+    - pods
+    - replicationcontrollers
+    - persistentvolumeclaims
+    - secrets
+    - services
+    - namespaces
+    - deploymentConfigs
+    - routes
+    - builds
+    - templates
+    - imagestreams
+    - users
+    - projects
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - ""
+    - apps.openshift.io
+    resources:
+    - deploymentconfigs
+    verbs:
+    - get
+    - list
+    - watch
+
+
+# A service account for use by the controller.
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: user-analytics
+
+# A service to expose the metrics server
+- apiVersion: v1
+  kind: Service
+  metadata:
+    name: user-analytics
+  spec:
+    ports:
+    - name: "metrics"
+      protocol: TCP
+      port: ${METRICS_PORT}
+      targetPort: "metrics"
+
+# Binds the service account to the account management role
+- apiVersion: v1
+  kind: ClusterRoleBinding
+  metadata:
+    name: user-analytics
+  roleRef:
+    name: user-analytics
+  subjects:
+  - kind: ServiceAccount
+    name: user-analytics
+    namespace: openshift-infra
+
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    name: ${NAME}
+  spec:
+  status:
+    dockerImageRepository:
+
+- kind: BuildConfig
+  apiVersion: v1
+  metadata:
+    name: ${NAME}
+  spec:
+    source:
+      git:
+        uri: ${GIT_REPO}
+        ref: ${GIT_REF}
+    strategy:
+      dockerStrategy:
+        from:
+          kind: DockerImage
+          name: golang:1.8
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${NAME}:latest
+    triggers:
+      - type: ConfigChange
+
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    name: ${NAME}
+  spec:
+    replicas: 1
+    selector:
+      app: ${NAME}
+    strategy:
+      type: Recreate
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames:
+          - ${NAME}
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}:latest
+    template:
+      metadata:
+        labels:
+          app: ${NAME}
+      spec:
+        serviceAccountName: user-analytics
+        containers:
+        - name: ${NAME}
+          image: ${NAME}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: ${LIVENESS_PROBE_PERIOD}
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: 8080
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: ${READINESS_PROBE_PERIOD}
+          ports:
+          - name: "metrics"
+            containerPort: 8080
+            protocol: TCP
+          resources:
+            requests:
+              memory: ${MEMORY_REQUEST}
+              cpu: ${CPU_REQUEST}
+            limits:
+              memory: ${MEMORY_LIMIT}
+              cpu: ${CPU_LIMIT}
+          env:
+          - name: LOG_LEVEL
+            value: ${LOG_LEVEL}
+          - name: CLUSTER_NAME
+            value: ${CLUSTER_NAME}
+          - name: LOCAL_ENDPOINT_ENABLED
+            value: ${LOCAL_ENDPOINT_ENABLED}
+          - name: WOOPRA_ENABLED
+            value: ${WOOPRA_ENABLED}
+          - name: WOOPRA_ENDPOINT
+            value: ${WOOPRA_ENDPOINT}
+          - name: WOOPRA_DOMAIN
+            value: ${WOOPRA_DOMAIN}
+          - name: USER_KEY_STRATEGY
+            value: ${USER_KEY_STRATEGY}
+          - name: USER_KEY_ANNOTATION
+            value: ${USER_KEY_ANNOTATION}
+          - name: MAXIMUM_QUEUE_LENGTH
+            value: ${MAXIMUM_QUEUE_LENGTH}
+          - name: METRICS_POLLING_FREQUENCY
+            value: ${METRICS_POLLING_FREQUENCY}
+          - name: METRICS_COLLECT_RUNTIME
+            value: ${METRICS_COLLECT_RUNTIME}
+          - name: METRICS_COLLECT_WOOPRA
+            value: ${METRICS_COLLECT_WOOPRA}
+          - name: METRICS_COLLECT_QUEUE
+            value: ${METRICS_COLLECT_QUEUE}
+          command:
+          - /go/bin/user-analytics
+          - -useServiceAccounts=true
+          - -clusterName=$(CLUSTER_NAME)
+          - -maximumQueueLength=$(MAXIMUM_QUEUE_LENGTH)
+          - -metricsPollingFrequency=$(METRICS_POLLING_FREQUENCY)
+          - -localEndpointEnabled=$(LOCAL_ENDPOINT_ENABLED)
+          - -woopraEnabled=$(WOOPRA_ENABLED)
+          - -woopraEndpoint=$(WOOPRA_ENDPOINT)
+          - -woopraDomain=$(WOOPRA_DOMAIN)
+          - -userKeyStrategy=$(USER_KEY_STRATEGY)
+          - -userKeyAnnotation=$(USER_KEY_ANNOTATION)
+          - -collectRuntime=$(METRICS_COLLECT_RUNTIME)
+          - -collectWoopra=$(METRICS_COLLECT_WOOPRA)
+          - -collectQueue=$(METRICS_COLLECT_QUEUE)
+          - -metricsBindAddr=:8080
+          - -v=$(LOG_LEVEL)
+          - -logtostderr=true
