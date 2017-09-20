@@ -23,8 +23,8 @@ import (
 	"k8s.io/kubernetes/pkg/api"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/golang/glog"
 )
 
 const KeyStrategyAnnotation = "annotation"
@@ -69,7 +69,7 @@ type AnalyticsControllerConfig struct {
 
 // NewAnalyticsController creates a new ThirdPartyAnalyticsController
 func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsController, error) {
-	glog.V(1).Infof("Creating user-analytics controller")
+	log.Infoln("Creating user-analytics controller")
 	ctrl := &AnalyticsController{
 		watchResourceVersions: make(map[string]string),
 		queue:                   cache.NewFIFO(analyticKeyFunc),
@@ -101,12 +101,12 @@ func analyticKeyFunc(obj interface{}) (string, error) {
 
 // Run starts all the watches within this controller and starts workers to process events
 func (c *AnalyticsController) Run(stopCh <-chan struct{}, workers int) {
-	glog.V(1).Infof("Starting ThirdPartyAnalyticsController\n")
 
 	c.stopChannel = stopCh
 	c.startTime = time.Now().UnixNano()
 
-	glog.V(6).Infof("Controller start time: %v", c.startTime)
+	log.WithFields(log.Fields{"started": c.startTime}).Info("starting controller")
+
 	// the workers that forward analytic events to destinations
 	for i := 0; i < workers; i++ {
 		go wait.Until(c.worker, time.Second, c.stopChannel)
@@ -143,13 +143,16 @@ func (c *AnalyticsController) runWatches() {
 		go wait.Until(func() {
 			// any return from this func only exits that invocation of the func.
 			// wait.Until will call it again after its sync period.
-			glog.V(3).Infof("Starting watch for %s", n)
+			watchLog := log.WithFields(log.Fields{
+				"watch": n,
+			})
+			watchLog.Infof("starting watch")
 			w, err := wfnc.watchFunc(metav1.ListOptions{})
 			if err != nil {
-				glog.Errorf("error creating watch %s: %v", n, err)
+				watchLog.Errorf("error creating watch: %v", err)
 			}
 
-			glog.V(6).Infof("Backing off %s watch for %v seconds", n, backoff)
+			watchLog.Debugf("backing off watch for %v seconds", backoff)
 			time.Sleep(backoff)
 			backoff = backoff * 2
 			if backoff > 60*time.Second {
@@ -157,7 +160,7 @@ func (c *AnalyticsController) runWatches() {
 			}
 
 			if w == nil {
-				glog.Errorf("watch function nil, watch not created for %s, returning", n)
+				watchLog.Errorln("watch function nil, watch not created, returning")
 				return
 			}
 
@@ -165,12 +168,12 @@ func (c *AnalyticsController) runWatches() {
 				select {
 				case event, ok := <-w.ResultChan():
 					if !ok {
-						glog.V(3).Infof("%s watch channel closed unexpectedly, attempting to re-establish watch", n)
+						watchLog.Warnln("watch channel closed unexpectedly, attempting to re-establish")
 						return
 					}
 
 					if event.Type == watch.Error {
-						glog.Errorf("Watch channel for %s returned error: %s", n, spew.Sdump(event))
+						watchLog.Errorf("watch channel returned error: %s", spew.Sdump(event))
 						return
 					}
 
@@ -180,7 +183,7 @@ func (c *AnalyticsController) runWatches() {
 
 					if event.Type == watch.Added || event.Type == watch.Deleted {
 						if err != nil {
-							glog.Errorf("Unable to create object meta for %v in %s watch", event.Object, n)
+							watchLog.Errorf("Unable to create object meta for %v: %v", event.Object, err)
 							return
 						}
 
@@ -193,7 +196,8 @@ func (c *AnalyticsController) runWatches() {
 						if _, ok := lastResourceVersion.SetString(c.watchResourceVersions[n], 10); ok {
 							if _, ok = currentResourceVersion.SetString(m.GetResourceVersion(), 10); ok {
 								if lastResourceVersion.Cmp(currentResourceVersion) == 1 {
-									glog.V(5).Infof("ResourceVersion %v is to old for %v (%v)", currentResourceVersion, n, c.watchResourceVersions[n])
+									watchLog.Debugf("ResourceVersion %v is to old (%v)",
+										currentResourceVersion, c.watchResourceVersions[n])
 									c.mutex.RUnlock()
 									break
 								}
@@ -208,13 +212,13 @@ func (c *AnalyticsController) runWatches() {
 
 						analytic, err := newEvent(event.Object, event.Type)
 						if err != nil {
-							glog.Errorf("Unexpected error creation analytic in %s watch from watch event %#v", n, event.Object)
+							watchLog.Errorf("unexpected error creating analytic from watch event %#v", event.Object)
 						} else {
 							// additional info will be set to the analytic and
 							// an instance queued for all destinations
 							err := c.AddEvent(analytic)
 							if err != nil {
-								glog.Errorf("Error in %s watch adding event: %v - %v", n, err, analytic)
+								watchLog.Errorf("error adding event: %v - %v", err, analytic)
 							}
 						}
 					}
@@ -247,17 +251,26 @@ func (c *AnalyticsController) runProjectWatch() {
 }
 
 func (c *AnalyticsController) processAnalyticFromQueue(obj interface{}) error {
-	glog.V(6).Infof("Processing analytics event from queue: %v", obj)
 	e, ok := obj.(*analyticsEvent)
 	if !ok {
 		return fmt.Errorf("Expected analyticEvent object but got %v", obj)
 	}
+	qLog := log.WithFields(log.Fields{
+		"name":            e.event,
+		"objectName":      e.objectName,
+		"objectKind":      e.objectKind,
+		"objectNamespace": e.objectNamespace,
+		"objectUID":       e.objectUID,
+		"eventTimestamp":  e.timestamp,
+	})
+
+	qLog.Debugln("processing analytics event from queue")
 
 	if len(e.destination) == 0 {
 		return fmt.Errorf("No destination specified. Ignoring analytic: %v", e)
 	}
 
-	glog.V(6).Infof("Attempting to send analytic event to destination %s", e.destination)
+	qLog.Debugf("attempting to send analytic event to destination %s", e.destination)
 	dest, ok := c.destinations[e.destination]
 	if !ok {
 		return fmt.Errorf("Destination %s not found", e.destination)
@@ -276,7 +289,7 @@ func (c *AnalyticsController) worker() {
 		func() {
 			_, err := c.queue.Pop(c.processAnalyticFromQueue)
 			if err != nil {
-				glog.Errorf("error processing analytic: %v", err)
+				log.Errorf("error processing analytic: %v", err)
 			}
 		}()
 	}
@@ -289,29 +302,43 @@ func (c *AnalyticsController) worker() {
 // The namespace owner is automatically assigned as the event owner.
 // Events w/ timestamps earlier than the start of this controller are not processed.
 func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
-	glog.V(6).Infof("Adding analyticEvent to queue: %v", ev)
+	qLog := log.WithFields(log.Fields{
+		"name":            ev.event,
+		"objectName":      ev.objectName,
+		"objectKind":      ev.objectKind,
+		"objectNamespace": ev.objectNamespace,
+		"objectUID":       ev.objectUID,
+		"eventTimestamp":  ev.timestamp,
+	})
+
 	if len(c.queue.ListKeys()) > c.maximumQueueLength {
-		return fmt.Errorf("analyticEvent reject, exceeds maximum queue length: %d - %#v", c.maximumQueueLength, ev)
+		return fmt.Errorf("analyticEvent rejected, exceeds maximum queue length: %d - %#v", c.maximumQueueLength, ev)
 	}
 	if ev.timestamp.UnixNano() < c.startTime {
-		glog.V(5).Infof("Warning: analyticEvent is too old: %v", ev)
+		qLog.WithFields(log.Fields{"started": c.startTime}).Debug("skipping analytic event older than controller start time")
 		return nil
 	}
 
 	for destName := range c.destinations {
 		ev.destination = destName // needed here to find default ID by destination
 		userId, err := c.getUserId(ev)
+
 		if err != nil {
 			switch err.reason {
 			case missingProjectError, requesterAnnotationNotFoundError:
-				glog.V(3).Infoln(err.message)
+				qLog.Warn(err.message)
 			case userNotFoundError, noIDFoundError:
-				glog.V(5).Infoln(err.message)
+				qLog.Debugln(err.message)
 			default:
-				glog.V(5).Infof("Unexpected error reason '%v' getting user id: %v", err.reason, err.message)
+				qLog.WithFields(log.Fields{
+					"reason":  err.reason,
+					"message": err.message,
+				}).Warn("unexpected error getting user ID")
 			}
 			return nil
 		}
+		qLog = qLog.WithFields(log.Fields{"user": userId})
+		qLog.Debug("adding analytic event to queue")
 
 		e := &analyticsEvent{
 			userID:          userId,
@@ -383,7 +410,7 @@ func (c *AnalyticsController) getUserId(ev *analyticsEvent) (string, *userIDErro
 		}
 	}
 
-	glog.V(6).Infof("Getting userId with strategy %s", c.userKeyStrategy)
+	log.WithFields(log.Fields{"strategy": c.userKeyStrategy}).Debug("getting user ID")
 	user := userObj.(*userapi.User)
 	switch c.userKeyStrategy {
 	case KeyStrategyAnnotation:

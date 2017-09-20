@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"log"
 	"os"
 
 	"github.com/openshift/online-analytics/pkg/useranalytics"
@@ -14,11 +13,12 @@ import (
 	kclientcmd "k8s.io/client-go/tools/clientcmd"
 	kclientset "k8s.io/kubernetes/pkg/client/clientset_generated/internalclientset"
 
-	glog "github.com/golang/glog"
+	log "github.com/Sirupsen/logrus"
 	"github.com/spf13/pflag"
 )
 
 func main() {
+	log.SetOutput(os.Stdout)
 	var useServiceAccounts bool
 	var clusterName string
 	var maximumQueueLength, metricsPollingFrequency int
@@ -26,6 +26,7 @@ func main() {
 	var woopraEnabled, localEndpointEnabled bool
 	var userKeyStrategy, userKeyAnnotation string
 	var metricsBindAddr string
+	var logLevel string
 	var collectRuntime, collectWoopra, collectQueue bool
 
 	flag.BoolVar(&useServiceAccounts, "useServiceAccounts", false, "Connect to OpenShift using a service account")
@@ -38,6 +39,7 @@ func main() {
 	flag.StringVar(&woopraEndpoint, "woopraEndpoint", "http://www.example.com", "The URL to send data to")
 	flag.StringVar(&woopraDomain, "woopraDomain", "openshift", "The domain to collect data under")
 	flag.BoolVar(&woopraEnabled, "woopraEnabled", true, "Enable/disable sending data to Woopra")
+	flag.StringVar(&logLevel, "logLevel", "info", "Log level (error, warn, info, debug)")
 
 	flag.StringVar(&userKeyStrategy, "userKeyStrategy", useranalytics.KeyStrategyUID, "Strategy used to key users in Woopra. Options are [annotation|name|uid]")
 	flag.StringVar(&userKeyAnnotation, "userKeyAnnotation", useranalytics.OnlineManagedID, "User annotation to use if userKeyStrategy=annotation")
@@ -46,6 +48,12 @@ func main() {
 	flag.BoolVar(&collectWoopra, "collectWoopra", true, "Enable woopra metrics")
 	flag.BoolVar(&collectQueue, "collectQueue", true, "Enable queue metrics")
 	flag.Parse()
+
+	if lvl, err := log.ParseLevel(logLevel); err != nil {
+		log.Panic(err)
+	} else {
+		log.SetLevel(lvl)
+	}
 
 	_, _, openshiftClient, kubeClient, err := createClients()
 
@@ -74,6 +82,10 @@ func main() {
 			Endpoint: woopraEndpoint,
 			Client:   useranalytics.NewSimpleHttpClient(),
 		}
+		log.WithFields(log.Fields{
+			"method":   "GET",
+			"domain":   woopraDomain,
+			"endpoint": woopraEndpoint}).Info("created woopra destination")
 	}
 
 	if localEndpointEnabled {
@@ -83,16 +95,20 @@ func main() {
 			Endpoint: "http://127.0.0.1:8888/dest",
 			Client:   useranalytics.NewSimpleHttpClient(),
 		}
+		log.WithFields(log.Fields{
+			"method":   "GET",
+			"domain":   "local",
+			"endpoint": "http://127.0.0.1:8888/dest"}).Info("created local destination")
 	}
 
 	if len(config.Destinations) == 0 {
-		glog.V(0).Infof("No analytics destinations configured.  Analytics controller will not be started.")
+		log.Errorln("No analytics destinations configured.  Analytics controller will not be started.")
 		os.Exit(5)
 	}
 
 	controller, err := useranalytics.NewAnalyticsController(config)
 	if err != nil {
-		glog.Errorf("Error creating controller: %v", err)
+		log.Errorf("Error creating controller: %v", err)
 		os.Exit(6)
 	}
 
@@ -113,7 +129,8 @@ func main() {
 		}
 		err := server.Serve()
 		if err != nil {
-			glog.Errorf("Error running metrics server: %s", err)
+			log.Errorf("Error running metrics server: %s", err)
+			// TODO: exit here?
 		}
 	}()
 

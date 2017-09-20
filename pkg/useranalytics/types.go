@@ -9,10 +9,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
-
-	"github.com/golang/glog"
 )
 
+// TODO: analyticsEvent and analyticEvent both used in this app, rename one to be more clear
 type analyticsEvent struct {
 	// userID of the namespace/project owner.  TODO: change to action owner
 	userID string
@@ -40,13 +39,16 @@ type analyticsEvent struct {
 }
 
 func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyticsEvent, error) {
-	glog.V(6).Infof("Creating new event type %s from runtime: %+v", eventType, obj)
 	m, err := meta.Accessor(obj)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create object meta for %v", obj)
 	}
 	o2 := reflect.ValueOf(obj)
+
+	// TODO: can come out as something like "*template.template"
+	// ObjectTyper might be better here but would cause inconsistency with previous analytics
 	simpleTypeName := strings.ToLower(strings.Replace(o2.Type().String(), "*api.", "", 1))
+
 	eventName := fmt.Sprintf("%s_%s", simpleTypeName, strings.ToLower(string(eventType)))
 
 	analyticEvent := &analyticsEvent{
@@ -63,13 +65,11 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 		analyticEvent.annotations[key] = value
 	}
 
-	glog.V(6).Infof("Created analyticEvent %+v", analyticEvent)
 	// TODO: this is deprecated. Replace with meta.Accessor after rebase.
 	accessor, err := meta.Accessor(obj)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to get ObjectMeta for %v", obj)
 	}
-
 	// These funcs are in a newer version of Kube. Rebase is currently underway.
 	//	_ = meta.GetCreationTimestamp()
 	//	_ = meta.GetDeletionTimestamp()
@@ -84,7 +84,7 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 			analyticEvent.timestamp = accessor.GetDeletionTimestamp().Time
 		}
 	default:
-		return nil, fmt.Errorf("Unknown event %v", eventType)
+		return nil, fmt.Errorf("unknown event type %v", eventType)
 	}
 
 	return analyticEvent, nil
@@ -93,7 +93,7 @@ func newEvent(obj interface{}, eventType watch.EventType) (*analyticsEvent, erro
 	if rt, ok := obj.(runtime.Object); ok {
 		return newEventFromRuntime(rt, eventType)
 	}
-	return nil, fmt.Errorf("Object not kind runtime.Object:  %v", obj)
+	return nil, fmt.Errorf("Object not runtime.Object:  %v", obj)
 }
 
 func (ev *analyticsEvent) Hash() string {

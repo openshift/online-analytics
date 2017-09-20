@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/golang/glog"
+	log "github.com/Sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
@@ -83,7 +83,7 @@ func (m *MockHttpEndpoint) Run(stopCh <-chan struct{}) {
 
 	go wait.Until(m.serve, 1*time.Second, stopCh)
 	go wait.Until(m.log, 60*time.Second, stopCh)
-	glog.Info("Mock endpoint started")
+	log.Info("Mock endpoint started")
 }
 
 func (m *MockHttpEndpoint) log() {
@@ -91,11 +91,11 @@ func (m *MockHttpEndpoint) log() {
 }
 
 func (m *MockHttpEndpoint) serve() {
-	glog.V(1).Infof("Mock endpoint listening at %s", m.URLPrefix)
+	log.Infof("Mock endpoint listening at %s", m.URLPrefix)
 	http.HandleFunc("/", m.handler)
 	strPort := fmt.Sprintf(":%d", m.Port)
 	if err := http.ListenAndServe(strPort, nil); err != nil {
-		glog.Fatal("Could not start server")
+		log.Fatal("Could not start server")
 	}
 }
 
@@ -115,7 +115,7 @@ func (m *MockHttpEndpoint) handler(w http.ResponseWriter, r *http.Request) {
 
 	hash := fmt.Sprintf("%s, %s, %s, %s, %s, %s, %s, %s", host, event, cv_email, cv_project_namespace, ce_name, ce_namespace, ce_uid, ce_timestamp)
 
-	glog.V(5).Infof("MockEndpoint received %v", hash)
+	log.Infof("MockEndpoint received %v", hash)
 
 	if m.DupeCheck {
 		if _, exists := m.Analytics[hash]; !exists {

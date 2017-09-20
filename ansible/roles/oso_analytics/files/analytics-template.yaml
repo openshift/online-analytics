@@ -64,7 +64,7 @@ parameters:
 
 - name: LOG_LEVEL
   description: Logging level.
-  value: "0"
+  value: "info"
 
 - name: LIVENESS_PROBE_PERIOD
   description: Liveness probe period in seconds.
@@ -284,5 +284,5 @@ objects:
           - -collectWoopra=$(METRICS_COLLECT_WOOPRA)
           - -collectQueue=$(METRICS_COLLECT_QUEUE)
           - -metricsBindAddr=:8080
-          - -v=$(LOG_LEVEL)
+          - -logLevel=$(LOG_LEVEL)
           - -logtostderr=true

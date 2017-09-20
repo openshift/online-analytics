@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/golang/glog"
+	log "github.com/Sirupsen/logrus"
 )
 
 // A "Destination" is a thing that can send data to an endpoint. In the "Store and Forward" implementation, this object
@@ -27,29 +27,47 @@ type WoopraDestination struct {
 	Client   SimpleHttpClient
 }
 
-func (d *WoopraDestination) send(params map[string]string) error {
+func (d *WoopraDestination) send(reqLog *log.Entry, params map[string]string) error {
 	urlParams := url.Values{}
 	for key, value := range params {
 		urlParams.Add(key, value)
 	}
 	encodedParams := urlParams.Encode()
-	glog.V(6).Infof("Sending request to WoopraDestination: %+v", d)
+	reqLog.Debugln("sending request")
 	if d.Method == "GET" {
 		endpoint := d.Endpoint
 		if strings.Index(endpoint, "?%s") != (len(endpoint) - 3) {
 			endpoint = endpoint + "?%s"
 		}
 		encodedUrl := fmt.Sprintf(endpoint, encodedParams)
-		glog.V(6).Infof("GET request to %s", encodedUrl)
+		reqLog.Debugf("GET request: %s", encodedUrl)
 		resp, err := d.Client.Get(encodedUrl)
 		if err != nil {
+			reqLog.Error(err)
 			return err
 		}
-		glog.V(6).Infof("Response from GET request to %s: %s", encodedUrl, resp.Body)
-		_, err = ioutil.ReadAll(resp.Body)
+		reqLog = reqLog.WithFields(log.Fields{
+			"status": resp.StatusCode,
+		})
+
+		body, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			return fmt.Errorf("error forwarding analytic: %v", err)
+			err = fmt.Errorf("error reading response body: %v", err)
+			reqLog.Error(err)
+			return err
 		}
+		reqLog.Debugln("response body: ", string(body))
+		// A non-200 HTTP status does not throw a golang error, must check ourselves:
+		// NOTE: This appears to happen quite a bit. This was silently ignored previously,
+		// not returning an error here until we know more, for now just warning.
+		if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			reqLog.WithFields(log.Fields{"body": string(body)}).Warn("unexpected HTTP response")
+			return nil
+		}
+
+		// This is the one line we log at INFO level per request, it should cover enough
+		// information to identify the exact event, user, endpoint, and HTTP status.
+		reqLog.Infoln("analytic event sent")
 
 	} else if d.Method == "POST" {
 		return fmt.Errorf("POST not implemented yet")
@@ -61,6 +79,16 @@ func (d *WoopraDestination) send(params map[string]string) error {
 }
 
 func (d *WoopraDestination) Send(ev *analyticsEvent) error {
+	reqLog := log.WithFields(log.Fields{
+		"endpoint":        d.Endpoint,
+		"name":            ev.event,
+		"objectName":      ev.objectName,
+		"objectKind":      ev.objectKind,
+		"objectNamespace": ev.objectNamespace,
+		"objectUID":       ev.objectUID,
+		"eventTimestamp":  ev.timestamp,
+		"userID":          ev.userID,
+	})
 	// all vendor-specific field mapping to be done here
 	params := map[string]string{
 		"host":             d.Domain,
@@ -80,7 +108,7 @@ func (d *WoopraDestination) Send(ev *analyticsEvent) error {
 	for key, value := range ev.properties {
 		params[key] = value
 	}
-	return d.send(params)
+	return d.send(reqLog, params)
 }
 
 // SimpleHttpClient is a tiny HTTP interface that allows easy mock testing
@@ -101,19 +129,16 @@ type realHttpClient struct {
 var _ SimpleHttpClient = &realHttpClient{}
 
 func (h *realHttpClient) Get(endpoint string) (*http.Response, error) {
-	glog.V(6).Infof("Creating new GET request")
 	req, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %v", err)
 	}
 
-	glog.V(6).Infof("Sending GET request: %+v", req)
 	resp, e := h.httpClient.Do(req)
 	if e != nil {
 		return nil, e
 	}
 
-	glog.V(6).Infof("GET request response: %s", resp.Body)
 	_, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("error forwarding analytic: %v", err)
