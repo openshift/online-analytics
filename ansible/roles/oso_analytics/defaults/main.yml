@@ -13,7 +13,7 @@ osoan_local_endpoint_enabled: false
 osoan_user_key_strategy: name
 osoan_woopra_endpoint: http://www.woopra.com/track/ce
 osoan_woopra_enabled: true
-osoan_log_level: 0
+osoan_log_level: 3
 
 # If true, will completely uninstall app before running rest of role:
 osoan_uninstall: False

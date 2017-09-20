@@ -1,6 +1,6 @@
 # By default we use a mock local endpoint instead of connecting to Woopra:
 online_analytics_woopra_enabled: false
 online_analytics_local_endpoint_enabled: true
-online_analytics_log_level: 5
+online_analytics_log_level: 3
 
 osoan_cluster_name: devenv

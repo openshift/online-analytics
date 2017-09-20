@@ -64,7 +64,7 @@ parameters:
 
 - name: LOG_LEVEL
   description: Logging level.
-  value: "0"
+  value: "3"
 
 - name: LIVENESS_PROBE_PERIOD
   description: Liveness probe period in seconds.
