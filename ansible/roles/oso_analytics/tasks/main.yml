@@ -11,6 +11,21 @@
 - include: uninstall.yml
   when: osoan_uninstall | bool
 
+# When this role was introduced, we renamed the various objects in OpenShift to better
+# align with all our other apps. (renamed from online-user-analytics to just analytics)
+# Make sure we clear out the old objects if we see them even if uninstall was not set.
+# Because this app is stateless in the cluster, no data should be lost here, we just
+# resume submitting to Woopra.
+# TODO: this can be removed once this role has run against all environments
+- name: "uninstall legacy components"
+  oc_obj:
+    state: absent
+    kind: "{{ item.kind }}"
+    name: "{{ item.name }}"
+    namespace: "{{ osoan_namespace }}"
+  with_items:
+    - { kind: "deploymentconfig", name: "online-user-analytics" }
+
 - debug: msg="Deploying {{ osoan_name}} from {{ osoan_git_repo }} ref {{osoan_git_ref }}"
 
 - name: copy application template
