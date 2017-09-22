@@ -55,7 +55,8 @@ func main() {
 		log.SetLevel(lvl)
 	}
 
-	_, _, openshiftClient, kubeClient, err := createClients()
+	_, clientFac, openshiftClient, kubeClient, err := createClients()
+	_, typer := clientFac.Object()
 
 	if !validateKeyStrategy(userKeyStrategy) {
 		log.Fatalf("Must set a valid userKeyStrategy.")
@@ -73,6 +74,7 @@ func main() {
 		ClusterName:             clusterName,
 		UserKeyStrategy:         userKeyStrategy,
 		UserKeyAnnotation:       userKeyAnnotation,
+		Typer:                   typer,
 	}
 
 	if woopraEnabled {

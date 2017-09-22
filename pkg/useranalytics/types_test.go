@@ -14,6 +14,7 @@ import (
 )
 
 func TestHash(t *testing.T) {
+	typer := api.Scheme
 
 	hashedValues := make(map[string]bool)
 
@@ -58,7 +59,7 @@ func TestHash(t *testing.T) {
 			},
 		},
 	} {
-		event, err := newEvent(test.obj, watch.Added)
+		event, err := newEvent(typer, test.obj, watch.Added)
 		if err != nil {
 			t.Errorf("Unexpected error %s", err)
 		}
@@ -82,7 +83,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "pod",
-				event:           "add",
+				event:           "pod_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -96,7 +97,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "replicationcontroller",
-				event:           "add",
+				event:           "replicationcontroller_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -110,7 +111,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "persistentvolumeclaim",
-				event:           "add",
+				event:           "persistentvolumeclaim_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -124,7 +125,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "secret",
-				event:           "add",
+				event:           "secret_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -138,7 +139,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "service",
-				event:           "add",
+				event:           "service_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -152,7 +153,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "namespace",
-				event:           "add",
+				event:           "namespace_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -166,7 +167,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "deployment",
-				event:           "add",
+				event:           "deploymentconfig_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -180,7 +181,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "route",
-				event:           "add",
+				event:           "route_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -194,7 +195,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "build",
-				event:           "add",
+				event:           "build_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -222,7 +223,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "template",
-				event:           "add",
+				event:           "template_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -236,7 +237,7 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 			},
 			expected: &analyticsEvent{
 				objectKind:      "imagestream",
-				event:           "add",
+				event:           "imagestream_added",
 				objectName:      "foo",
 				objectNamespace: "bar",
 			},
@@ -244,7 +245,13 @@ func TestAnalyticEventFactoryFuncs(t *testing.T) {
 	}
 
 	for name, test := range tests {
-		event, _ := newEvent(test.input, watch.Added)
+		event, err := newEvent(api.Scheme, test.input, watch.Added)
+		if err != nil {
+			t.Errorf("Test %s got unexpected error: %v", name, err)
+		}
+		if event.event != test.expected.event {
+			t.Errorf("Test %s expected event '%s' but got '%s'", name, test.expected.event, event.event)
+		}
 		if event.objectName != test.expected.objectName {
 			t.Errorf("Expected %s but got %s", test.expected.objectName, event.objectName)
 		}

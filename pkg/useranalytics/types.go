@@ -2,7 +2,6 @@ package useranalytics
 
 import (
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 
@@ -38,16 +37,17 @@ type analyticsEvent struct {
 	errorMessage string
 }
 
-func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyticsEvent, error) {
+func newEventFromRuntime(typer runtime.ObjectTyper, obj runtime.Object, eventType watch.EventType) (*analyticsEvent, error) {
 	m, err := meta.Accessor(obj)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create object meta for %v", obj)
 	}
-	o2 := reflect.ValueOf(obj)
 
-	// TODO: can come out as something like "*template.template"
-	// ObjectTyper might be better here but would cause inconsistency with previous analytics
-	simpleTypeName := strings.ToLower(strings.Replace(o2.Type().String(), "*api.", "", 1))
+	kinds, _, err := typer.ObjectKinds(obj)
+	if err != nil {
+		return nil, err
+	}
+	simpleTypeName := strings.ToLower(kinds[0].Kind)
 
 	eventName := fmt.Sprintf("%s_%s", simpleTypeName, strings.ToLower(string(eventType)))
 
@@ -89,9 +89,10 @@ func newEventFromRuntime(obj runtime.Object, eventType watch.EventType) (*analyt
 
 	return analyticEvent, nil
 }
-func newEvent(obj interface{}, eventType watch.EventType) (*analyticsEvent, error) {
+
+func newEvent(typer runtime.ObjectTyper, obj interface{}, eventType watch.EventType) (*analyticsEvent, error) {
 	if rt, ok := obj.(runtime.Object); ok {
-		return newEventFromRuntime(rt, eventType)
+		return newEventFromRuntime(typer, rt, eventType)
 	}
 	return nil, fmt.Errorf("Object not runtime.Object:  %v", obj)
 }

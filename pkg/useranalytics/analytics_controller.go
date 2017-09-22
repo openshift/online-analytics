@@ -54,6 +54,7 @@ type AnalyticsController struct {
 	clusterName             string
 	userKeyStrategy         string
 	userKeyAnnotation       string
+	typer                   runtime.ObjectTyper
 }
 
 type AnalyticsControllerConfig struct {
@@ -65,6 +66,7 @@ type AnalyticsControllerConfig struct {
 	ClusterName             string
 	UserKeyStrategy         string
 	UserKeyAnnotation       string
+	Typer                   runtime.ObjectTyper
 }
 
 // NewAnalyticsController creates a new ThirdPartyAnalyticsController
@@ -86,6 +88,7 @@ func NewAnalyticsController(config *AnalyticsControllerConfig) (*AnalyticsContro
 		clusterName:             config.ClusterName,
 		userKeyStrategy:         config.UserKeyStrategy,
 		userKeyAnnotation:       config.UserKeyAnnotation,
+		typer:                   config.Typer,
 	}
 
 	return ctrl, nil
@@ -210,7 +213,7 @@ func (c *AnalyticsController) runWatches() {
 						c.watchResourceVersions[n] = m.GetResourceVersion()
 						c.mutex.Unlock()
 
-						analytic, err := newEvent(event.Object, event.Type)
+						analytic, err := newEvent(c.typer, event.Object, event.Type)
 						if err != nil {
 							watchLog.Errorf("unexpected error creating analytic from watch event %#v", event.Object)
 						} else {

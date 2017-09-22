@@ -66,6 +66,7 @@ func TestProvisioner(t *testing.T) {
 		MaximumQueueLength:      10000,
 		MetricsPollingFrequency: 5,
 		UserKeyStrategy:         "uid",
+		Typer:                   api.Scheme,
 	}
 
 	config.Destinations["mock"] = &useranalytics.WoopraDestination{

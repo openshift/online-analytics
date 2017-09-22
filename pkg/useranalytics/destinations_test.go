@@ -22,7 +22,7 @@ func TestWoopraDestination(t *testing.T) {
 
 	// TODO:  this needs some kind of factory per object
 	// that creates analyticsEvent objects
-	event, _ := newEvent(pod, watch.Added)
+	event, _ := newEvent(api.Scheme, pod, watch.Added)
 
 	dest := &WoopraDestination{
 		Method:   "GET",
@@ -58,7 +58,7 @@ func TestWoopraLive(t *testing.T) {
 		m.SetName("foo")
 		m.SetNamespace("foobar")
 
-		event, _ := newEvent(w.objType, watch.Added)
+		event, _ := newEvent(api.Scheme, w.objType, watch.Added)
 
 		dest := &WoopraDestination{
 			Method:   "GET",
