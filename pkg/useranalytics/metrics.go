@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/golang/glog"
+	log "github.com/Sirupsen/logrus"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -88,7 +88,7 @@ func (s *MetricsServer) Serve() error {
 type logWrapper struct{}
 
 func (l *logWrapper) Println(v ...interface{}) {
-	glog.V(0).Info(v)
+	log.Info(v)
 }
 
 type WoopraCollector struct {

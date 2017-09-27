@@ -25,7 +25,7 @@ func TestAnalyticObjectCreation(t *testing.T) {
 		},
 	}
 
-	ev, err := newEvent(pod, watch.Added)
+	ev, err := newEvent(api.Scheme, pod, watch.Added)
 	if err != nil {
 		t.Errorf("Unexpected error %v", err)
 	}
@@ -38,7 +38,7 @@ func TestAnalyticObjectCreation(t *testing.T) {
 	}
 
 	pod.DeletionTimestamp = &metav1.Time{time.Now().Add(10 * time.Second)}
-	ev, err = newEvent(pod, watch.Deleted)
+	ev, err = newEvent(api.Scheme, pod, watch.Deleted)
 	if err != nil {
 		t.Errorf("Unexpected error %v", err)
 	}
@@ -50,7 +50,7 @@ func TestAnalyticObjectCreation(t *testing.T) {
 		t.Errorf("Expected %v but got %v", pod.DeletionTimestamp.UnixNano(), ev.timestamp.UnixNano())
 	}
 
-	ev, err = newEvent(pod, watch.Modified)
+	ev, err = newEvent(api.Scheme, pod, watch.Modified)
 	if err == nil {
 		t.Errorf("Expected error but got nil")
 	}
@@ -131,7 +131,7 @@ func TestGetUserId(t *testing.T) {
 		pod.Name = "foo"
 		pod.Namespace = "foo"
 
-		event, _ := newEvent(pod, watch.Added)
+		event, _ := newEvent(api.Scheme, pod, watch.Added)
 		// this is added by AddEvent, which puts many analyticEvents in the queue, one for each destination
 		event.destination = "mock"
 
