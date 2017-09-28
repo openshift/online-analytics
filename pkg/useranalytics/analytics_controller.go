@@ -329,7 +329,9 @@ func (c *AnalyticsController) AddEvent(ev *analyticsEvent) error {
 		if err != nil {
 			switch err.reason {
 			case missingProjectError, requesterAnnotationNotFoundError:
-				qLog.Warn(err.message)
+				// TODO: maintain a list of projects we exclude from analytics,
+				// and consider this expected for those, a warning for others:
+				qLog.Infoln(err.message)
 			case userNotFoundError, noIDFoundError:
 				qLog.Debugln(err.message)
 			default:
