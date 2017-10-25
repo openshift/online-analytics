@@ -8,3 +8,9 @@ repos:
   copy:
   - src: roles/lib_openshift/
     dst: roles/lib_openshift/
+- id: online-archivist
+  url: https://github.com/openshift/online-archivist.git
+  version: master
+  copy:
+  - src: ansible/roles/oc_start_build_check/
+    dst: roles/oc_start_build_check/
