@@ -6,5 +6,5 @@ online_analytics_log_level: debug
 osoan_cluster_name: devenv
 
 osoan_log_level: debug
-osoan_git_repo: "https://github.com/dgoodwin/online-analytics.git"
-osoan_git_ref: "logging-revamp"
+osoan_git_repo: "https://github.com/openshift/online-analytics.git"
+osoan_git_ref: master

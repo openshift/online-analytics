@@ -17,7 +17,8 @@
 # Because this app is stateless in the cluster, no data should be lost here, we just
 # resume submitting to Woopra.
 # TODO: this can be removed once this role has run against all environments
-- name: "uninstall legacy components"
+# TODO: why does this always show a change?
+- name: Uninstall legacy components
   oc_obj:
     state: absent
     kind: "{{ item.kind }}"
@@ -28,13 +29,13 @@
 
 - debug: msg="Deploying {{ osoan_name}} from {{ osoan_git_repo }} ref {{osoan_git_ref }}"
 
-- name: copy application template
+- name: Copy application template
   copy:
     src: analytics-template.yaml
     dest: "{{ osoan_template_path }}"
     #  register: copy_template_out
 
-- name: create template
+- name: Create template
   oc_obj:
     state: present
     namespace: "{{ osoan_namespace }}"
@@ -43,19 +44,37 @@
     files:
     - "{{ osoan_template_path }}"
 
-- name: Create the analytics app using the analytics template
-  oc_process:
+- name: Apply template
+  shell: "oc process -n {{ osoan_namespace }} user-analytics -p GIT_REPO='{{ osoan_git_repo }}' -p GIT_REF='{{ osoan_git_ref }}' -p WOOPRA_ENABLED='{{ osoan_woopra_enabled }}' -p WOOPRA_ENDPOINT='{{ osoan_woopra_endpoint }}' -p WOOPRA_DOMAIN='{{ osoan_woopra_domain }}' -p LOCAL_ENDPOINT_ENABLED='{{ osoan_local_endpoint_enabled }}' -p USER_KEY_STRATEGY='{{ osoan_user_key_strategy }}' -p CLUSTER_NAME='{{ osoan_cluster_name }}' -p LOG_LEVEL='{{ osoan_log_level }}' | oc apply -n {{ osoan_namespace }} -f -"
+  # apply does not indicate if something changed today. Assume changed_when
+  # false and rely on the template update as our best indicator if something
+  # changed.
+  changed_when: false
+
+- name: Fetch latest git commit
+  git:
+    repo: "{{ osoan_git_repo }}"
+    version: "{{ osoan_git_ref }}"
+    clone: no
+    accept_hostkey: true
+  register: git_sha1_results
+  # Git may not be installed on remote hosts.
+  delegate_to: localhost
+  changed_when: false
+
+- debug: msg="Checking that latest build matches git ref {{ git_sha1_results.after }}"
+
+- name: Load the start-build role so module is available
+  include_role:
+    name: oc_start_build_check
+
+- name: Start build if required
+  oc_start_build_check:
     namespace: "{{ osoan_namespace }}"
-    template_name: user-analytics
-    create: True
-    reconcile: True
-    params:
-      GIT_REPO: "{{ osoan_git_repo }}"
-      GIT_REF: "{{ osoan_git_ref }}"
-      WOOPRA_ENABLED: "{{ osoan_woopra_enabled }}"
-      WOOPRA_ENDPOINT: "{{ osoan_woopra_endpoint }}"
-      WOOPRA_DOMAIN: "{{ osoan_woopra_domain }}"
-      LOCAL_ENDPOINT_ENABLED: "{{ osoan_local_endpoint_enabled }}"
-      USER_KEY_STRATEGY: "{{ osoan_user_key_strategy }}"
-      CLUSTER_NAME: "{{ osoan_cluster_name }}"
-      LOG_LEVEL: "{{ osoan_log_level }}"
+    buildconfig: "analytics"
+    git_ref: "{{ git_sha1_results.after }}"
+  register: start_build_out
+
+- debug: var=start_build_out
+
+

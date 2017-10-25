@@ -1,3 +1,6 @@
 ansible/roles/lib_openshift
+ansible/roles/oc_start_build_check
+ansible/vars/zz_custom_vars.yml
+ansible/*.retry
 ansible.log
 ansible/.gogitit-cache.yml

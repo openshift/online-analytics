@@ -27,10 +27,6 @@ parameters:
   description: The number of seconds between metrics snapshots.
   value: "10"
 
-- name: METRICS_PORT
-  description: Port to create a service for http metrics requests
-  value: "8080"
-
 - name: METRICS_COLLECT_RUNTIME
   description: Enable runtime metrics
   value: "true"
@@ -65,14 +61,6 @@ parameters:
 - name: LOG_LEVEL
   description: Logging level.
   value: "info"
-
-- name: LIVENESS_PROBE_PERIOD
-  description: Liveness probe period in seconds.
-  value: "10"
-
-- name: READINESS_PROBE_PERIOD
-  description: Readiness probe period in seconds.
-  value: "10"
 
 - name: CPU_REQUEST
   description: CPU resource request
@@ -143,7 +131,7 @@ objects:
     ports:
     - name: "metrics"
       protocol: TCP
-      port: ${METRICS_PORT}
+      port: 8080
       targetPort: "metrics"
 
 # Binds the service account to the account management role
@@ -222,14 +210,14 @@ objects:
               port: 8080
               scheme: HTTP
             initialDelaySeconds: 5
-            periodSeconds: ${LIVENESS_PROBE_PERIOD}
+            periodSeconds: 10
           readinessProbe:
             httpGet:
               path: /healthz/ready
               port: 8080
               scheme: HTTP
             initialDelaySeconds: 5
-            periodSeconds: ${READINESS_PROBE_PERIOD}
+            periodSeconds: 10
           ports:
           - name: "metrics"
             containerPort: 8080
