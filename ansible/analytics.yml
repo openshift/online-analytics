@@ -10,9 +10,6 @@
       - yml
 
   - include_role:
-      name: lib_openshift
-
-  - include_role:
       name: oso_analytics
     vars:
       osoan_woopra_enabled: "{{ online_analytics_woopra_enabled }}"
