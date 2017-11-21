@@ -64,10 +64,6 @@
 
 - debug: msg="Checking that latest build matches git ref {{ git_sha1_results.after }}"
 
-- name: Load the start-build role so module is available
-  include_role:
-    name: oc_start_build_check
-
 - name: Start build if required
   oc_start_build_check:
     namespace: "{{ osoan_namespace }}"
