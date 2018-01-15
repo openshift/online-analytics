@@ -5,6 +5,7 @@ A role to deploy and configure the OpenShift Online User Analytics application.
 ## Dependencies
 
 - lib_openshift role from openshift-ansible must be loaded in a playbook prior to running this role.
+- oc_start_build_check role from online-archivist repository. (included via gogitit)
 
 ## Role Variables
 
