@@ -11,45 +11,37 @@
 - include: uninstall.yml
   when: osoan_uninstall | bool
 
-# When this role was introduced, we renamed the various objects in OpenShift to better
-# align with all our other apps. (renamed from online-user-analytics to just analytics)
-# Make sure we clear out the old objects if we see them even if uninstall was not set.
-# Because this app is stateless in the cluster, no data should be lost here, we just
-# resume submitting to Woopra.
-# TODO: this can be removed once this role has run against all environments
-# TODO: why does this always show a change?
-- name: Uninstall legacy components
-  oc_obj:
-    state: absent
-    kind: "{{ item.kind }}"
-    name: "{{ item.name }}"
-    namespace: "{{ osoan_namespace }}"
-  with_items:
-    - { kind: "deploymentconfig", name: "online-user-analytics" }
-
-- debug: msg="Deploying {{ osoan_name}} from {{ osoan_git_repo }} ref {{osoan_git_ref }}"
+- debug:
+    msg: "Deploying {{ osoan_name}} from {{ osoan_git_repo }} ref {{osoan_git_ref }}"
 
 - name: Copy application template
   copy:
     src: analytics-template.yaml
     dest: "{{ osoan_template_path }}"
-    #  register: copy_template_out
+  register: template
 
 - name: Create template
-  oc_obj:
-    state: present
-    namespace: "{{ osoan_namespace }}"
-    name: user-analytics
-    kind: template
-    files:
-    - "{{ osoan_template_path }}"
+  command: "oc apply -f {{ osoan_template_path }} -n {{ osoan_namespace }}"
+  when: template|changed
 
-- name: Apply template
-  shell: "oc process -n {{ osoan_namespace }} user-analytics -p GIT_REPO='{{ osoan_git_repo }}' -p GIT_REF='{{ osoan_git_ref }}' -p WOOPRA_ENABLED='{{ osoan_woopra_enabled }}' -p WOOPRA_ENDPOINT='{{ osoan_woopra_endpoint }}' -p WOOPRA_DOMAIN='{{ osoan_woopra_domain }}' -p LOCAL_ENDPOINT_ENABLED='{{ osoan_local_endpoint_enabled }}' -p USER_KEY_STRATEGY='{{ osoan_user_key_strategy }}' -p CLUSTER_NAME='{{ osoan_cluster_name }}' -p LOG_LEVEL='{{ osoan_log_level }}' | oc apply -n {{ osoan_namespace }} -f -"
-  # apply does not indicate if something changed today. Assume changed_when
-  # false and rely on the template update as our best indicator if something
-  # changed.
-  changed_when: false
+- name: Create pod from template
+  oc_process:
+    namespace: "{{ osoan_namespace }}"
+    template_name: user-analytics
+    reconcile: True
+    create: True
+    params:
+      NAME: user-analytics
+      GIT_REPO: "{{ osoan_git_repo }}"
+      GIT_REF: "{{ osoan_git_ref }}"
+      WOOPRA_ENABLED: "{{ osoan_woopra_enabled }}"
+      WOOPRA_ENDPOINT: "{{ osoan_woopra_endpoint }}"
+      WOOPRA_DOMAIN: "{{ osoan_woopra_domain }}"
+      LOCAL_ENDPOINT_ENABLED: "{{ osoan_local_endpoint_enabled }}"
+      USER_KEY_STRATEGY: "{{ osoan_user_key_strategy }}"
+      CLUSTER_NAME: "{{ osoan_cluster_name }}"
+      LOG_LEVEL: "{{ osoan_log_level }}"
+  when: template|changed
 
 - name: Fetch latest git commit
   git:
@@ -73,4 +65,9 @@
 
 - debug: var=start_build_out
 
-
+- name: Check deployment status
+  include_role:
+    name: roles/oso_deployment_status
+  vars:
+    osds_dc_name: "{{ osoan_name }}"
+    osds_namespace: "{{ osoan_namespace }}"
