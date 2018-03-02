@@ -15,8 +15,8 @@
     msg: "Deploying {{ osoan_name}} from {{ osoan_git_repo }} ref {{osoan_git_ref }}"
 
 - name: Copy application template
-  copy:
-    src: analytics-template.yaml
+  template:
+    src: analytics-template.yaml.j2
     dest: "{{ osoan_template_path }}"
   register: template
 
@@ -59,7 +59,7 @@
 - name: Start build if required
   oc_start_build_check:
     namespace: "{{ osoan_namespace }}"
-    buildconfig: "analytics"
+    buildconfig: "{{ osoan_name }}"
     git_ref: "{{ git_sha1_results.after }}"
   register: start_build_out
 

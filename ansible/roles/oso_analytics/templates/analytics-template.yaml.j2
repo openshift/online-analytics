@@ -1,11 +1,11 @@
 apiVersion: v1
 kind: Template
 metadata:
-  name: user-analytics
+  name: "{{ osoan_name }}"
 parameters:
 - name: NAME
   description: The name of the DeploymentConfig.
-  value: analytics
+  value: "{{ osoan_name }}"
 
 - name: GIT_REPO
   description: Git repository housing the Analytics Dockerfile and application code to build and deploy.
@@ -85,7 +85,7 @@ objects:
   metadata:
     annotations:
       authorization.openshift.io/system-only: "true"
-    name: user-analytics
+    name: ${NAME}
   rules:
   - resources:
     - pods
@@ -120,13 +120,13 @@ objects:
 - apiVersion: v1
   kind: ServiceAccount
   metadata:
-    name: user-analytics
+    name: ${NAME}
 
 # A service to expose the metrics server
 - apiVersion: v1
   kind: Service
   metadata:
-    name: user-analytics
+    name: ${NAME}
   spec:
     ports:
     - name: "metrics"
@@ -138,12 +138,12 @@ objects:
 - apiVersion: v1
   kind: ClusterRoleBinding
   metadata:
-    name: user-analytics
+    name: ${NAME}
   roleRef:
-    name: user-analytics
+    name: ${NAME}
   subjects:
   - kind: ServiceAccount
-    name: user-analytics
+    name: ${NAME}
     namespace: openshift-infra
 
 - apiVersion: v1
@@ -200,7 +200,7 @@ objects:
         labels:
           app: ${NAME}
       spec:
-        serviceAccountName: user-analytics
+        serviceAccountName: ${NAME}
         containers:
         - name: ${NAME}
           image: ${NAME}
