@@ -13,3 +13,7 @@
     - { kind: "clusterrole", name: "{{ osoan_name }}" }
     - { kind: "serviceaccount", name: "{{ osoan_name }}" }
     - { kind: "service", name: "{{ osoan_name }}" }
+- name: "remove {{ osoan_template_path }}"
+  file:
+    path: "{{ osoan_template_path }}"
+    state: absent
