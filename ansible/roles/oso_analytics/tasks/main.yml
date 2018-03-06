@@ -8,7 +8,7 @@
   - osoan_woopra_enabled
   - osoan_woopra_domain
 
-- include: uninstall.yml
+- import_tasks: uninstall.yml
   when: osoan_uninstall | bool
 
 - debug:
