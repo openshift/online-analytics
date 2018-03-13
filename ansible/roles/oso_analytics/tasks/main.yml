@@ -14,6 +14,12 @@
 - debug:
     msg: "Deploying {{ osoan_name}} from {{ osoan_git_repo }} ref {{osoan_git_ref }}"
 
+# Keep the same file structure as we currently have with openshift-scripts rpm
+- name: Ensure template directory exists
+  file:
+    path: "{{ osoan_template_directory }}"
+    state: directory
+
 - name: Copy application template
   template:
     src: analytics-template.yaml.j2
