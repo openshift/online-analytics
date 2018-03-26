@@ -31,22 +31,7 @@
   when: template|changed
 
 - name: Create pod from template
-  oc_process:
-    namespace: "{{ osoan_namespace }}"
-    template_name: user-analytics
-    reconcile: True
-    create: True
-    params:
-      NAME: user-analytics
-      GIT_REPO: "{{ osoan_git_repo }}"
-      GIT_REF: "{{ osoan_git_ref }}"
-      WOOPRA_ENABLED: "{{ osoan_woopra_enabled }}"
-      WOOPRA_ENDPOINT: "{{ osoan_woopra_endpoint }}"
-      WOOPRA_DOMAIN: "{{ osoan_woopra_domain }}"
-      LOCAL_ENDPOINT_ENABLED: "{{ osoan_local_endpoint_enabled }}"
-      USER_KEY_STRATEGY: "{{ osoan_user_key_strategy }}"
-      CLUSTER_NAME: "{{ osoan_cluster_name }}"
-      LOG_LEVEL: "{{ osoan_log_level }}"
+  shell: "oc process -n {{ osoan_namespace }} {{ osoan_name }} -p GIT_REPO='{{ osoan_git_repo }}' -p GIT_REF='{{ osoan_git_ref }}' -p WOOPRA_ENABLED='{{ osoan_woopra_enabled }}' -p WOOPRA_ENDPOINT='{{ osoan_woopra_endpoint }}' -p WOOPRA_DOMAIN='{{ osoan_woopra_domain }}' -p LOCAL_ENDPOINT_ENABLED='{{ osoan_local_endpoint_enabled }}' -p USER_KEY_STRATEGY='{{ osoan_user_key_strategy }}' -p CLUSTER_NAME='{{ osoan_cluster_name }}' -p LOG_LEVEL='{{ osoan_log_level }}' | oc apply -n {{ osoan_namespace }} -f -"
   when: template|changed
 
 - name: Fetch latest git commit
