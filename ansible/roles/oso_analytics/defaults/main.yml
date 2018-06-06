@@ -6,8 +6,9 @@
 osoan_git_repo: "https://github.com/openshift/online-analytics.git"
 osoan_git_ref: "master"
 
-osoan_template_path: /etc/openshift-online/templates/analytics.yaml
-osoan_name: analytics
+osoan_template_directory: /etc/openshift-online/templates
+osoan_template_path: "{{ osoan_template_directory }}/analytics.yaml"
+osoan_name: user-analytics
 osoan_namespace: openshift-infra
 osoan_local_endpoint_enabled: false
 osoan_user_key_strategy: name
